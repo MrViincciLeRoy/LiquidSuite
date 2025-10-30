@@ -13,13 +13,16 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 
 from lsuite import create_app
 from lsuite.extensions import db
-from lsuite.models import User
+from lsuite.models import User, TransactionCategory
 
 
 @pytest.fixture(scope='function')
 def app():
     """Create and configure a test application instance."""
     app = create_app('testing')
+    
+    # Disable CSRF for testing
+    app.config['WTF_CSRF_ENABLED'] = False
     
     with app.app_context():
         db.create_all()
@@ -79,6 +82,36 @@ def auth_client(client, user):
 
 
 @pytest.fixture(scope='function')
+def sample_categories(app):
+    """Create sample transaction categories for testing"""
+    with app.app_context():
+        categories = [
+            TransactionCategory(
+                name='Test Transport',
+                description='Transportation expenses',
+                keywords='uber,taxi,bolt,ride,transport'
+            ),
+            TransactionCategory(
+                name='Test Food',
+                description='Food and dining',
+                keywords='restaurant,food,lunch,dinner,meal,eat'
+            ),
+            TransactionCategory(
+                name='Test Income',
+                description='Income and revenue',
+                keywords='payment received,salary,income,revenue,client'
+            )
+        ]
+        
+        for category in categories:
+            db.session.add(category)
+        
+        db.session.commit()
+        
+        yield categories
+
+
+@pytest.fixture(scope='function')
 def reset_db(app):
     """Reset the database before each test."""
     with app.app_context():
@@ -88,15 +121,3 @@ def reset_db(app):
     with app.app_context():
         db.session.remove()
         db.drop_all()
-"""```
-**Alternative solution:** If the above doesn't work, you might need to check your project structure. Based on the error path, it looks like your structure is:
-
-LiquidSuite/
-├── LiquidSuite/
-│   ├── lsuite/
-│   │   ├── __init__.py
-│   │   ├── models.py
-│   │   └── ...
-│   └── tests/
-│       ├── conftest.py
-│       └── test_auth.py''' """

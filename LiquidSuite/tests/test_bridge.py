@@ -1,3 +1,6 @@
+# ============================================================================
+# tests/test_bridge.py
+# ============================================================================
 """
 Test Bridge Services (Categorization)
 """
@@ -9,7 +12,7 @@ from lsuite.extensions import db
 
 
 @pytest.fixture
-def sample_transactions(app):
+def sample_transactions(app, sample_categories):
     """Create sample transactions for testing"""
     with app.app_context():
         # Create statement
@@ -70,7 +73,7 @@ def test_categorization_service_init(app):
         assert service is not None
 
 
-def test_auto_categorize_all(app, sample_transactions):
+def test_auto_categorize_all(app, sample_categories, sample_transactions):
     """Test automatic categorization of all transactions"""
     with app.app_context():
         service = CategorizationService()
@@ -95,7 +98,7 @@ def test_auto_categorize_all(app, sample_transactions):
         assert restaurant_trans.category.name == 'Test Food'
 
 
-def test_find_matching_category(app, sample_transactions):
+def test_find_matching_category(app, sample_categories, sample_transactions):
     """Test finding matching category for description"""
     with app.app_context():
         service = CategorizationService()
@@ -124,7 +127,7 @@ def test_find_matching_category(app, sample_transactions):
         # May or may not match depending on keywords
 
 
-def test_preview_categorization(app, sample_transactions):
+def test_preview_categorization(app, sample_categories, sample_transactions):
     """Test categorization preview"""
     with app.app_context():
         service = CategorizationService()
@@ -145,7 +148,7 @@ def test_preview_categorization(app, sample_transactions):
             assert 'keyword' in match
 
 
-def test_suggest_category(app):
+def test_suggest_category(app, sample_categories):
     """Test category suggestion"""
     with app.app_context():
         service = CategorizationService()
@@ -165,7 +168,7 @@ def test_suggest_category(app):
         # May return None or a category depending on keywords
 
 
-def test_category_keywords_matching(app):
+def test_category_keywords_matching(app, sample_categories):
     """Test TransactionCategory keyword matching"""
     with app.app_context():
         category = TransactionCategory.query.filter_by(name='Test Transport').first()
@@ -180,7 +183,7 @@ def test_category_keywords_matching(app):
         assert not category.matches_description('random transaction')
 
 
-def test_categorization_preserves_existing(app, sample_transactions):
+def test_categorization_preserves_existing(app, sample_categories, sample_transactions):
     """Test that categorization doesn't override existing categories"""
     with app.app_context():
         # Manually categorize one transaction
@@ -200,7 +203,7 @@ def test_categorization_preserves_existing(app, sample_transactions):
         # Note: Current implementation may recategorize. Adjust based on requirements
 
 
-def test_categorization_case_insensitive(app):
+def test_categorization_case_insensitive(app, sample_categories):
     """Test that keyword matching is case-insensitive"""
     with app.app_context():
         statement = EmailStatement(
