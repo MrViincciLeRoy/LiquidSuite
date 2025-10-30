@@ -24,9 +24,6 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data.lower()).first()
         
-        # Add a debug print to trace the control flow
-        # print(f"DEBUG: Attempting login for user: {form.email.data}")
-        
         if user is None or not user.check_password(form.password.data):
             flash('Invalid email or password', 'danger')
             return redirect(url_for('auth.login'))
@@ -85,6 +82,10 @@ def logout():
 def profile():
     """User profile"""
     form = ProfileForm(obj=current_user)
+    
+    # Set original values for validation
+    form.original_username = current_user.username
+    form.original_email = current_user.email
     
     if form.validate_on_submit():
         current_user.username = form.username.data
