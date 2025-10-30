@@ -4,7 +4,13 @@
 """
 Pytest Configuration and Fixtures
 """
+import sys
+import os
 import pytest
+
+# Add the parent directory to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from lsuite import create_app
 from lsuite.extensions import db
 from lsuite.models import User
@@ -82,3 +88,15 @@ def reset_db(app):
     with app.app_context():
         db.session.remove()
         db.drop_all()
+"""```
+**Alternative solution:** If the above doesn't work, you might need to check your project structure. Based on the error path, it looks like your structure is:
+
+LiquidSuite/
+├── LiquidSuite/
+│   ├── lsuite/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   └── ...
+│   └── tests/
+│       ├── conftest.py
+│       └── test_auth.py''' """
