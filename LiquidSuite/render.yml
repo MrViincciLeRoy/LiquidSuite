@@ -1,0 +1,88 @@
+# ============================================================================
+# render.yaml - Render Blueprint for LSuite
+# Deploy Flask web app with external Aiven PostgreSQL + Valkey
+# ============================================================================
+
+services:
+  # ===========================
+  # Flask Web Application
+  # ===========================
+  - type: web
+    name: lsuite-web
+    env: docker
+    dockerfilePath: ./Deployment/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon  # or singapore/frankfurt based on your location
+    
+    # Environment Variables
+    envVars:
+      # Flask Configuration
+      - key: FLASK_ENV
+        value: production
+      
+      - key: FLASK_APP
+        value: app.py
+      
+      # Database (Aiven PostgreSQL - External)
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      
+      # Cache/Queue (Aiven Valkey - External)
+      - key: CELERY_BROKER_URL
+        sync: false  # Set manually in Render dashboard
+      
+      - key: CELERY_RESULT_BACKEND
+        sync: false  # Set manually in Render dashboard
+      
+      # Security
+      - key: SECRET_KEY
+        generateValue: true
+      
+      # Google OAuth (Set in Render dashboard)
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      
+      - key: GOOGLE_REDIRECT_URI
+        value: https://lsuite-web.onrender.com/gmail/oauth/callback
+      
+      # ERPNext (Optional - Set in dashboard)
+      - key: ERPNEXT_BASE_URL
+        sync: false
+      
+      - key: ERPNEXT_API_KEY
+        sync: false
+      
+      - key: ERPNEXT_API_SECRET
+        sync: false
+      
+      # Logging
+      - key: LOG_LEVEL
+        value: INFO
+      
+      - key: LOG_FILE
+        value: /var/log/lsuite.log
+    
+    # Health Check
+    healthCheckPath: /api/health
+    
+    # Auto-deploy from main branch
+    autoDeploy: true
+    
+    # Build Command (optional - Docker handles this)
+    # buildCommand: pip install -r requirements.txt
+    
+    # Start Command (defined in Dockerfile)
+    # startCommand: gunicorn -w 4 -b 0.0.0.0:10000 app:app
+
+# ============================================================================
+# NO DATABASES SECTION - Using External Aiven Services
+# ============================================================================
+# We're not using Render's managed databases because:
+# 1. Free PostgreSQL expires data after 30 days
+# 2. Aiven provides better free tier (1GB, no expiry)
+# 3. Valkey is not available on Render free tier
+# 4. External databases give us more control and portability
