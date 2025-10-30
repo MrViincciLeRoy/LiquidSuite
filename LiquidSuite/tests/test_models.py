@@ -33,7 +33,7 @@ def test_transaction_category_model(app):
             name='Test Category',
             erpnext_account='Test Account',
             transaction_type='expense',
-            keywords='test,keyword,match'  # Remove spaces after commas
+            keywords='test,keyword,sample'  # Changed 'match' to 'sample'
         )
         db.session.add(category)
         db.session.commit()
@@ -47,7 +47,7 @@ def test_transaction_category_model(app):
         keywords = category.get_keywords_list()
         assert 'test' in keywords
         assert 'keyword' in keywords
-        assert 'match' in keywords
+        assert 'sample' in keywords  # Changed from 'match' to 'sample'
 
 
 def test_bank_transaction_model(app):
