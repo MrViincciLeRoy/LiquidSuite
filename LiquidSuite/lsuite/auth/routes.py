@@ -6,7 +6,6 @@ Authentication Routes
 """
 from flask import render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, login_required, current_user
-#from werkzeug.urls import urlparse as url_parse
 from urllib.parse import urlparse as url_parse
 from lsuite.extensions import db
 from lsuite.models import User
@@ -24,6 +23,9 @@ def login():
     
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data.lower()).first()
+        
+        # Add a debug print to trace the control flow
+        # print(f"DEBUG: Attempting login for user: {form.email.data}")
         
         if user is None or not user.check_password(form.password.data):
             flash('Invalid email or password', 'danger')
@@ -114,4 +116,3 @@ def change_password():
         return redirect(url_for('auth.profile'))
     
     return render_template('auth/change_password.html', form=form)
-
