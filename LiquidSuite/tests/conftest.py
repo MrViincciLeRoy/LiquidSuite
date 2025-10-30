@@ -89,16 +89,19 @@ def sample_categories(app):
             TransactionCategory(
                 name='Test Transport',
                 erpnext_account='Transport - Test',
+                transaction_type='expense',
                 keywords='uber,taxi,bolt,ride,transport'
             ),
             TransactionCategory(
                 name='Test Food',
                 erpnext_account='Food & Dining - Test',
+                transaction_type='expense',
                 keywords='restaurant,food,lunch,dinner,meal,eat'
             ),
             TransactionCategory(
                 name='Test Income',
                 erpnext_account='Income - Test',
+                transaction_type='income',
                 keywords='payment received,salary,income,revenue,client'
             )
         ]
