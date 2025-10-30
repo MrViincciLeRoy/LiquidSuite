@@ -6,6 +6,7 @@ Test Authentication Routes
 """
 import pytest
 from lsuite.models import User
+from lsuite.extensions import db
 
 
 def test_login_page(client):
@@ -36,20 +37,13 @@ def test_successful_login(client, user):
 
 def test_failed_login_wrong_password(client, app, user):
     """Test login with wrong password"""
-    # Create a user to attempt to log in as
-    with app.app_context():
-        # The test fixture `user` creates a user, so no need to do it here
-        pass
-
     response = client.post('/auth/login', data={
         'email': user.email,
         'password': 'wrongpassword'
     }, follow_redirects=True)
     
-    # Check flash message in the session and that the correct page is loaded
-    with client.session_transaction() as sess:
-        flashes = sess['_flashes']
-        assert flashes and b'Invalid email or password' in flashes[0][1].encode('utf-8')
+    # Check for flash message and login page
+    assert b'Invalid email or password' in response.data
     assert b'Sign In' in response.data
 
 
@@ -60,10 +54,8 @@ def test_failed_login_nonexistent_user(client, app):
         'password': 'password'
     }, follow_redirects=True)
     
-    # Check flash message and final page
-    with client.session_transaction() as sess:
-        flashes = sess['_flashes']
-        assert flashes and b'Invalid email or password' in flashes[0][1].encode('utf-8')
+    # Check for flash message and login page
+    assert b'Invalid email or password' in response.data
     assert b'Sign In' in response.data
 
 
@@ -76,11 +68,9 @@ def test_successful_registration(client, app):
         'password2': 'password123'
     }, follow_redirects=True)
     
-    # Check flash message and verify user is created
+    # Check for success message and verify user is created
     assert response.status_code == 200
-    with client.session_transaction() as sess:
-        flashes = sess['_flashes']
-        assert flashes and b'Registration successful! Please log in.' in flashes[0][1].encode('utf-8')
+    assert b'Registration successful! Please log in.' in response.data
     
     with app.app_context():
         user = User.query.filter_by(email='newuser@example.com').first()
@@ -94,7 +84,7 @@ def test_registration_duplicate_email(client, app, user):
         'email': 'test@example.com',  # Already exists from fixture
         'password': 'password123',
         'password2': 'password123'
-    }) # No follow_redirects needed here, validation fails before redirect
+    })
     
     # Check that the validation error is present in the response data
     assert b'Email already registered. Please use another.' in response.data
@@ -113,15 +103,13 @@ def test_registration_password_mismatch(client):
     assert b'Passwords must match' in response.data
 
 
-def test_logout(auth_client, app):
+def test_logout(auth_client):
     """Test logout functionality"""
     response = auth_client.get('/auth/logout', follow_redirects=True)
     
     assert response.status_code == 200
+    assert b'You have been logged out.' in response.data
     assert b'Sign In' in response.data
-    with client.session_transaction() as sess:
-        flashes = sess['_flashes']
-        assert flashes and b'You have been logged out.' in flashes[0][1].encode('utf-8')
 
 
 def test_protected_route_requires_login(client):
@@ -144,41 +132,35 @@ def test_profile_page(auth_client, user):
 
 def test_profile_update(auth_client, app, user):
     """Test profile update"""
-    with app.app_context():
-        # Manually set original form values for validation
-        user.username = 'testuser'
-        user.email = 'test@example.com'
-        
     response = auth_client.post('/auth/profile', data={
         'username': 'updateduser',
         'email': 'test@example.com'
     }, follow_redirects=True)
     
+    assert b'Profile updated successfully!' in response.data
+    
     with app.app_context():
-        user = User.query.filter_by(email='test@example.com').first()
-        assert user.username == 'updateduser'
+        updated_user = User.query.filter_by(email='test@example.com').first()
+        assert updated_user.username == 'updateduser'
 
 
 def test_change_password(auth_client, app, user):
     """Test password change"""
-    with app.app_context():
-        # Ensure the user has the correct password set for the test
-        user.set_password('testpassword')
-        db.session.commit()
-
     response = auth_client.post('/auth/change-password', data={
         'current_password': 'testpassword',
         'new_password': 'newpassword123',
         'new_password2': 'newpassword123'
     }, follow_redirects=True)
     
+    assert b'Password changed successfully!' in response.data
+    
     with app.app_context():
-        user_in_db = User.query.filter_by(email=user.email).first()
+        user_in_db = User.query.filter_by(email='test@example.com').first()
         assert user_in_db.check_password('newpassword123')
         assert not user_in_db.check_password('testpassword')
 
 
-def test_change_password_wrong_current(auth_client, app, user):
+def test_change_password_wrong_current(auth_client, user):
     """Test password change with wrong current password"""
     response = auth_client.post('/auth/change-password', data={
         'current_password': 'wrongpassword',
