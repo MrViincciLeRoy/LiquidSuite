@@ -88,17 +88,14 @@ def sample_categories(app):
         categories = [
             TransactionCategory(
                 name='Test Transport',
-                description='Transportation expenses',
                 keywords='uber,taxi,bolt,ride,transport'
             ),
             TransactionCategory(
                 name='Test Food',
-                description='Food and dining',
                 keywords='restaurant,food,lunch,dinner,meal,eat'
             ),
             TransactionCategory(
                 name='Test Income',
-                description='Income and revenue',
                 keywords='payment received,salary,income,revenue,client'
             )
         ]
