@@ -109,14 +109,6 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
       
-      - name: Set environment variables
-        run: |
-          echo "DATABASE_URL=postgresql://test_user:test_password@localhost:5432/lsuite_test" >> $GITHUB_ENV
-          echo "CELERY_BROKER_URL=redis://localhost:6379/0" >> $GITHUB_ENV
-          echo "CELERY_RESULT_BACKEND=redis://localhost:6379/0" >> $GITHUB_ENV
-          echo "SECRET_KEY=test-secret-key-for-ci" >> $GITHUB_ENV
-          echo "FLASK_ENV=testing" >> $GITHUB_ENV
-      
       - name: Wait for PostgreSQL
         run: |
           until pg_isready -h localhost -p 5432 -U test_user; do
@@ -125,10 +117,22 @@ jobs:
           done
       
       - name: Initialize database
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci
+          FLASK_ENV: testing
         run: |
           python -c "from lsuite import create_app; from lsuite.extensions import db; app = create_app('testing'); app.app_context().push(); db.create_all()"
       
       - name: Run tests with coverage
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
+          CELERY_BROKER_URL: redis://localhost:6379/0
+          CELERY_RESULT_BACKEND: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci
+          FLASK_ENV: testing
         run: |
           pytest tests/ -v --cov=lsuite --cov-report=xml --cov-report=term
       
