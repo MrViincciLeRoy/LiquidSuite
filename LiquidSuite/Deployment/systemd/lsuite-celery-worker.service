@@ -1,0 +1,21 @@
+#============================================================================
+# systemd Service File - lsuite-celery-worker.service
+#============================================================================
+[Unit]
+Description=LSuite Celery Worker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/celery -A lsuite.celery worker --loglevel=info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+

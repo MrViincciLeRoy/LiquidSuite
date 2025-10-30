@@ -1,0 +1,392 @@
+# ============================================================================
+# docker-compose.yml - Docker Compose Configuration
+# ============================================================================
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: lsuite-db
+    environment:
+      POSTGRES_DB: lsuite
+      POSTGRES_USER: lsuite_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - lsuite-network
+    restart: unless-stopped
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: lsuite-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - lsuite-network
+    restart: unless-stopped
+
+  # Flask Application
+  web:
+    build: .
+    container_name: lsuite-web
+    command: gunicorn -w 4 -b 0.0.0.0:5000 app:app
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://lsuite_user:${DB_PASSWORD}@postgres:5432/lsuite
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+    ports:
+      - "5000:5000"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - lsuite-network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Worker
+  celery-worker:
+    build: .
+    container_name: lsuite-celery-worker
+    command: celery -A lsuite.celery worker --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://lsuite_user:${DB_PASSWORD}@postgres:5432/lsuite
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - lsuite-network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build: .
+    container_name: lsuite-celery-beat
+    command: celery -A lsuite.celery beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql://lsuite_user:${DB_PASSWORD}@postgres:5432/lsuite
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - lsuite-network
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: lsuite-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - web
+    networks:
+      - lsuite-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  lsuite-network:
+    driver: bridge
+
+
+# ============================================================================
+# Dockerfile
+# ============================================================================
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Create non-root user
+RUN useradd -m -u 1000 lsuite && chown -R lsuite:lsuite /app
+USER lsuite
+
+EXPOSE 5000
+
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
+
+
+# ============================================================================
+# nginx.conf - Nginx Configuration
+# ============================================================================
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream lsuite {
+        server web:5000;
+    }
+
+    server {
+        listen 80;
+        server_name yourdomain.com;
+
+        # Redirect to HTTPS
+        return 301 https://$server_name$request_uri;
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name yourdomain.com;
+
+        # SSL Configuration
+        ssl_certificate /etc/nginx/ssl/cert.pem;
+        ssl_certificate_key /etc/nginx/ssl/key.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+
+        # Security Headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+
+        # Logging
+        access_log /var/log/nginx/lsuite-access.log;
+        error_log /var/log/nginx/lsuite-error.log;
+
+        # Max upload size
+        client_max_body_size 16M;
+
+        location / {
+            proxy_pass http://lsuite;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # Timeouts
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        location /static {
+            alias /app/lsuite/static;
+            expires 30d;
+            add_header Cache-Control "public, immutable";
+        }
+    }
+}
+
+
+# ============================================================================
+# .gitignore
+# ============================================================================
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Flask
+instance/
+.webassets-cache
+
+# Database
+*.db
+*.sqlite3
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SSL Certificates
+ssl/
+*.pem
+*.key
+*.crt
+
+# Migrations (optional - remove if you want to track them)
+migrations/versions/*.py
+
+
+# ============================================================================
+# Makefile - Useful Commands
+# ============================================================================
+.PHONY: help install dev prod test clean migrate seed
+
+help:
+	@echo "LSuite - Available Commands:"
+	@echo "  make install    - Install dependencies"
+	@echo "  make dev        - Run development server"
+	@echo "  make prod       - Run production server with Gunicorn"
+	@echo "  make docker     - Build and run with Docker Compose"
+	@echo "  make test       - Run tests"
+	@echo "  make migrate    - Run database migrations"
+	@echo "  make seed       - Seed database with default data"
+	@echo "  make clean      - Clean up temporary files"
+
+install:
+	pip install -r requirements.txt
+
+dev:
+	flask run --debug
+
+prod:
+	gunicorn -w 4 -b 0.0.0.0:5000 app:app
+
+docker:
+	docker-compose up -d --build
+
+docker-logs:
+	docker-compose logs -f
+
+docker-down:
+	docker-compose down
+
+test:
+	pytest tests/ -v --cov=lsuite
+
+migrate:
+	flask db upgrade
+
+seed:
+	flask seed-categories
+
+clean:
+	find . -type d -name "__pycache__" -exec rm -rf {} +
+	find . -type f -name "*.pyc" -delete
+	find . -type f -name "*.pyo" -delete
+	find . -type f -name "*.log" -delete
+
+
+# ============================================================================
+# systemd Service File - lsuite.service
+# ============================================================================
+[Unit]
+Description=LSuite Flask Application
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=notify
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+Environment="FLASK_ENV=production"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/gunicorn -w 4 -b 0.0.0.0:5000 app:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ============================================================================
+# systemd Service File - lsuite-celery-worker.service
+# ============================================================================
+[Unit]
+Description=LSuite Celery Worker
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/celery -A lsuite.celery worker --loglevel=info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+
+
+# ============================================================================
+# systemd Service File - lsuite-celery-beat.service
+# ============================================================================
+[Unit]
+Description=LSuite Celery Beat Scheduler
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/celery -A lsuite.celery beat --loglevel=info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

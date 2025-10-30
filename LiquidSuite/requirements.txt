@@ -1,0 +1,50 @@
+# Flask Core
+Flask==3.0.0
+Flask-SQLAlchemy==3.1.1
+Flask-Migrate==4.0.5
+Flask-Login==0.6.3
+Flask-WTF==1.2.1
+Flask-CORS==4.0.0
+
+# Database
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.23
+
+# Google APIs
+google-auth==2.25.2
+google-auth-oauthlib==1.2.0
+google-api-python-client==2.110.0
+
+# PDF Processing
+PyPDF2==3.0.1
+pdfplumber==0.10.3
+
+# Email & HTML Parsing
+beautifulsoup4==4.12.2
+lxml==4.9.3
+
+# HTTP Requests
+requests==2.31.0
+
+# Forms & Validation
+WTForms==3.1.1
+email-validator==2.1.0
+
+# Environment Variables
+python-dotenv==1.0.0
+
+# Date/Time
+pytz==2023.3
+
+# Celery (for background tasks)
+celery==5.3.4
+redis==5.0.1
+
+# Development
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.12.1
+flake8==6.1.0
+
+# Security
+cryptography==41.0.7

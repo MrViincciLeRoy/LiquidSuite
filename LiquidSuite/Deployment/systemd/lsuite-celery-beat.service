@@ -1,0 +1,20 @@
+#============================================================================
+# systemd Service File - lsuite-celery-beat.service
+#============================================================================
+[Unit]
+Description=LSuite Celery Beat Scheduler
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/celery -A lsuite.celery beat --loglevel=info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

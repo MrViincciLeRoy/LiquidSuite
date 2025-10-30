@@ -1,0 +1,183 @@
+<!-- lsuite/templates/gmail/statement_detail.html -->
+{% extends "base.html" %}
+
+{% block title %}Statement Details - LSuite{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2"><i class="fas fa-envelope-open"></i> Statement Details</h1>
+    <a href="{{ url_for('gmail.statements') }}" class="btn btn-secondary">
+        <i class="fas fa-arrow-left"></i> Back to Statements
+    </a>
+</div>
+
+<!-- Statement Info -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5><i class="fas fa-info-circle"></i> Statement Information</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-6">
+                <dl class="row">
+                    <dt class="col-sm-4">Subject:</dt>
+                    <dd class="col-sm-8">{{ statement.subject }}</dd>
+                    
+                    <dt class="col-sm-4">Sender:</dt>
+                    <dd class="col-sm-8">{{ statement.sender }}</dd>
+                    
+                    <dt class="col-sm-4">Date:</dt>
+                    <dd class="col-sm-8">{{ statement.date.strftime('%Y-%m-%d %H:%M') if statement.date }}</dd>
+                    
+                    <dt class="col-sm-4">Bank:</dt>
+                    <dd class="col-sm-8">
+                        <span class="badge bg-secondary">{{ statement.bank_name|upper }}</span>
+                    </dd>
+                </dl>
+            </div>
+            <div class="col-md-6">
+                <dl class="row">
+                    <dt class="col-sm-4">Status:</dt>
+                    <dd class="col-sm-8">
+                        {% if statement.state == 'parsed' %}
+                            <span class="badge bg-success">Parsed</span>
+                        {% else %}
+                            <span class="badge bg-secondary">{{ statement.state|capitalize }}</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-4">Has PDF:</dt>
+                    <dd class="col-sm-8">
+                        {% if statement.has_pdf %}
+                            <span class="text-success"><i class="fas fa-check"></i> Yes</span>
+                        {% else %}
+                            <span class="text-muted"><i class="fas fa-times"></i> No</span>
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-4">Transactions:</dt>
+                    <dd class="col-sm-8">
+                        <strong>{{ statement.transaction_count }}</strong>
+                    </dd>
+                    
+                    <dt class="col-sm-4">Gmail ID:</dt>
+                    <dd class="col-sm-8">
+                        <small class="text-muted">{{ statement.gmail_id }}</small>
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+    <div class="card-footer">
+        {% if not statement.has_pdf or statement.transaction_count == 0 %}
+        <form method="POST" action="{{ url_for('gmail.parse_statement', id=statement.id) }}" class="d-inline">
+            {% if statement.bank_name in ['tymebank', 'capitec'] %}
+                <div class="input-group" style="max-width: 400px; display: inline-flex;">
+                    <input type="password" 
+                           class="form-control form-control-sm" 
+                           name="pdf_password" 
+                           placeholder="PDF password (if protected)">
+                    <button type="submit" class="btn btn-primary btn-sm" data-loading="Parsing...">
+                        <i class="fas fa-file-pdf"></i> Download & Parse PDF
+                    </button>
+                </div>
+            {% else %}
+                <button type="submit" class="btn btn-primary btn-sm" data-loading="Parsing...">
+                    <i class="fas fa-file-pdf"></i> Download & Parse PDF
+                </button>
+            {% endif %}
+        </form>
+        {% endif %}
+        
+        {% if statement.transaction_count > 0 %}
+        <a href="{{ url_for('gmail.transactions') }}?statement_id={{ statement.id }}" 
+           class="btn btn-success btn-sm">
+            <i class="fas fa-list"></i> View Transactions
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Transactions -->
+{% if statement.transactions.count() > 0 %}
+<div class="card">
+    <div class="card-header">
+        <h5><i class="fas fa-exchange-alt"></i> Transactions ({{ statement.transaction_count }})</h5>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Type</th>
+                        <th>Amount</th>
+                        <th>Category</th>
+                        <th>Synced</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trans in statement.transactions.order_by('date desc').all() %}
+                    <tr>
+                        <td>{{ trans.date }}</td>
+                        <td>{{ trans.description[:50] }}{% if trans.description|length > 50 %}...{% endif %}</td>
+                        <td>
+                            {% if trans.transaction_type == 'debit' %}
+                                <span class="badge bg-danger">Debit</span>
+                            {% else %}
+                                <span class="badge bg-success">Credit</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            <strong class="text-{{ 'danger' if trans.transaction_type == 'debit' else 'success' }}">
+                                R{{ "%.2f"|format(trans.amount) }}
+                            </strong>
+                        </td>
+                        <td>
+                            {% if trans.category %}
+                                <span class="badge bg-info">{{ trans.category.name }}</span>
+                            {% else %}
+                                <span class="text-muted">Uncategorized</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if trans.erpnext_synced %}
+                                <span class="text-success"><i class="fas fa-check"></i></span>
+                            {% else %}
+                                <span class="text-muted"><i class="fas fa-times"></i></span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-warning">
+    <i class="fas fa-exclamation-triangle"></i> 
+    No transactions found. Parse the PDF to extract transactions.
+</div>
+{% endif %}
+
+<!-- Email Body Preview -->
+{% if statement.body_text or statement.body_html %}
+<div class="card mt-4">
+    <div class="card-header">
+        <h5><i class="fas fa-envelope"></i> Email Content</h5>
+    </div>
+    <div class="card-body">
+        {% if statement.body_text %}
+        <pre class="bg-light p-3" style="max-height: 300px; overflow-y: auto;">{{ statement.body_text[:1000] }}{% if statement.body_text|length > 1000 %}...{% endif %}</pre>
+        {% elif statement.body_html %}
+        <div class="bg-light p-3" style="max-height: 300px; overflow-y: auto;">
+            {{ statement.body_html[:1000]|safe }}
+            {% if statement.body_html|length > 1000 %}...{% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

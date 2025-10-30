@@ -1,0 +1,156 @@
+"""
+Celery Tasks for Background Processing
+"""
+import logging
+from celery import Celery
+from celery.schedules import crontab
+from flask import current_app
+
+logger = logging.getLogger(__name__)
+
+
+def make_celery(app):
+    """Create and configure Celery app"""
+    celery = Celery(
+        app.import_name,
+        broker=app.config['CELERY_BROKER_URL'],
+        backend=app.config['CELERY_RESULT_BACKEND']
+    )
+    celery.conf.update(app.config)
+    
+    class ContextTask(celery.Task):
+        def __call__(self, *args, **kwargs):
+            with app.app_context():
+                return self.run(*args, **kwargs)
+    
+    celery.Task = ContextTask
+    return celery
+
+
+# Initialize Celery (will be properly configured when app is created)
+celery = Celery('lsuite')
+
+
+@celery.task(name='lsuite.tasks.import_statements')
+def import_statements_task():
+    """Background task to import statements from Gmail"""
+    from lsuite.models import GoogleCredential
+    from lsuite.gmail.services import GmailService
+    from flask import current_app
+    
+    logger.info("Starting automatic statement import...")
+    
+    # Get all authenticated credentials
+    credentials = GoogleCredential.query.filter_by(is_authenticated=True).all()
+    
+    if not credentials:
+        logger.warning("No authenticated Google credentials found")
+        return
+    
+    service = GmailService(current_app)
+    total_imported = 0
+    total_skipped = 0
+    
+    for cred in credentials:
+        try:
+            imported, skipped = service.fetch_statements(cred)
+            total_imported += imported
+            total_skipped += skipped
+            logger.info(f"Credential {cred.name}: imported {imported}, skipped {skipped}")
+        except Exception as e:
+            logger.error(f"Error importing from credential {cred.name}: {str(e)}")
+            continue
+    
+    logger.info(f"Import complete: {total_imported} new statements, {total_skipped} skipped")
+    return {'imported': total_imported, 'skipped': total_skipped}
+
+
+@celery.task(name='lsuite.tasks.auto_categorize')
+def auto_categorize_task():
+    """Background task to auto-categorize transactions"""
+    from lsuite.bridge.services import CategorizationService
+    
+    logger.info("Starting automatic categorization...")
+    
+    service = CategorizationService()
+    categorized, total = service.auto_categorize_all()
+    
+    logger.info(f"Categorization complete: {categorized} of {total} transactions")
+    return {'categorized': categorized, 'total': total}
+
+
+@celery.task(name='lsuite.tasks.sync_to_erpnext')
+def sync_to_erpnext_task():
+    """Background task to sync transactions to ERPNext"""
+    from lsuite.models import ERPNextConfig
+    from lsuite.bridge.services import BulkSyncService
+    
+    logger.info("Starting ERPNext sync...")
+    
+    config = ERPNextConfig.query.filter_by(active=True).first()
+    
+    if not config:
+        logger.warning("No active ERPNext configuration found")
+        return {'success': 0, 'failed': 0, 'total': 0}
+    
+    service = BulkSyncService(config)
+    success, failed, total = service.sync_all_ready()
+    
+    logger.info(f"Sync complete: {success} success, {failed} failed, {total} total")
+    return {'success': success, 'failed': failed, 'total': total}
+
+
+@celery.task(name='lsuite.tasks.cleanup_old_logs')
+def cleanup_old_logs_task():
+    """Background task to cleanup old sync logs"""
+    from lsuite.models import ERPNextSyncLog
+    from lsuite.extensions import db
+    from datetime import datetime, timedelta
+    
+    logger.info("Starting log cleanup...")
+    
+    # Delete logs older than 90 days
+    cutoff_date = datetime.utcnow() - timedelta(days=90)
+    
+    deleted = ERPNextSyncLog.query.filter(
+        ERPNextSyncLog.sync_date < cutoff_date
+    ).delete()
+    
+    db.session.commit()
+    
+    logger.info(f"Cleanup complete: {deleted} old logs deleted")
+    return {'deleted': deleted}
+
+
+# Periodic task schedule
+@celery.on_after_configure.connect
+def setup_periodic_tasks(sender, **kwargs):
+    """Configure periodic tasks"""
+    
+    # Import statements every 6 hours
+    sender.add_periodic_task(
+        crontab(hour='*/6', minute=0),
+        import_statements_task.s(),
+        name='import-statements-every-6h'
+    )
+    
+    # Auto-categorize every 2 hours
+    sender.add_periodic_task(
+        crontab(hour='*/2', minute=15),
+        auto_categorize_task.s(),
+        name='auto-categorize-every-2h'
+    )
+    
+    # Sync to ERPNext every 4 hours
+    sender.add_periodic_task(
+        crontab(hour='*/4', minute=30),
+        sync_to_erpnext_task.s(),
+        name='sync-erpnext-every-4h'
+    )
+    
+    # Cleanup old logs weekly (Sunday at 2 AM)
+    sender.add_periodic_task(
+        crontab(day_of_week=0, hour=2, minute=0),
+        cleanup_old_logs_task.s(),
+        name='cleanup-logs-weekly'
+    )

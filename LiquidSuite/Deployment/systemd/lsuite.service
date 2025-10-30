@@ -1,0 +1,21 @@
+#============================================================================
+# systemd Service File - lsuite.service
+#============================================================================
+[Unit]
+Description=LSuite Flask Application
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=notify
+User=lsuite
+Group=lsuite
+WorkingDirectory=/opt/lsuite
+Environment="PATH=/opt/lsuite/venv/bin"
+Environment="FLASK_ENV=production"
+EnvironmentFile=/opt/lsuite/.env
+ExecStart=/opt/lsuite/venv/bin/gunicorn -w 4 -b 0.0.0.0:5000 app:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

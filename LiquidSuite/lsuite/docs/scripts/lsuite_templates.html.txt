@@ -1,0 +1,373 @@
+<!-- ============================================================
+     lsuite/templates/base.html - Base Template
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}LSuite - Ledger Suite{% endblock %}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    {% include 'components/navbar.html' %}
+    
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            {% if current_user.is_authenticated %}
+            <nav class="col-md-2 d-md-block bg-light sidebar">
+                <div class="position-sticky pt-3">
+                    <ul class="nav flex-column">
+                        <li class="nav-item">
+                            <a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" href="{{ url_for('main.index') }}">
+                                <i class="fas fa-home"></i> Dashboard
+                            </a>
+                        </li>
+                        
+                        <li class="nav-item mt-3">
+                            <h6 class="sidebar-heading px-3 text-muted">Gmail</h6>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'gmail.credentials' in request.endpoint %}active{% endif %}" href="{{ url_for('gmail.credentials') }}">
+                                <i class="fas fa-key"></i> Credentials
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'gmail.statements' in request.endpoint %}active{% endif %}" href="{{ url_for('gmail.statements') }}">
+                                <i class="fas fa-envelope"></i> Statements
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'gmail.transactions' in request.endpoint %}active{% endif %}" href="{{ url_for('gmail.transactions') }}">
+                                <i class="fas fa-exchange-alt"></i> Transactions
+                            </a>
+                        </li>
+                        
+                        <li class="nav-item mt-3">
+                            <h6 class="sidebar-heading px-3 text-muted">Bridge</h6>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'bridge.categories' in request.endpoint %}active{% endif %}" href="{{ url_for('bridge.categories') }}">
+                                <i class="fas fa-tags"></i> Categories
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'bridge.bulk_operations' in request.endpoint %}active{% endif %}" href="{{ url_for('bridge.bulk_operations') }}">
+                                <i class="fas fa-tasks"></i> Bulk Operations
+                            </a>
+                        </li>
+                        
+                        <li class="nav-item mt-3">
+                            <h6 class="sidebar-heading px-3 text-muted">ERPNext</h6>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'erpnext.configs' in request.endpoint %}active{% endif %}" href="{{ url_for('erpnext.configs') }}">
+                                <i class="fas fa-cog"></i> Configuration
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link {% if 'erpnext.sync_logs' in request.endpoint %}active{% endif %}" href="{{ url_for('erpnext.sync_logs') }}">
+                                <i class="fas fa-history"></i> Sync Logs
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </nav>
+            {% endif %}
+            
+            <!-- Main content -->
+            <main class="col-md-10 ms-sm-auto px-md-4">
+                {% include 'components/flash_messages.html' %}
+                
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+    
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+
+
+<!-- ============================================================
+     lsuite/templates/components/navbar.html
+     ============================================================ -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="{{ url_for('main.index') if current_user.is_authenticated else url_for('auth.login') }}">
+            <i class="fas fa-file-invoice-dollar"></i> LSuite
+        </a>
+        
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                {% if current_user.is_authenticated %}
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-user"></i> {{ current_user.username }}
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('auth.profile') }}">
+                                <i class="fas fa-user-circle"></i> Profile
+                            </a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('auth.change_password') }}">
+                                <i class="fas fa-lock"></i> Change Password
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">
+                                <i class="fas fa-sign-out-alt"></i> Logout
+                            </a></li>
+                        </ul>
+                    </li>
+                {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('auth.login') }}">
+                            <i class="fas fa-sign-in-alt"></i> Login
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('auth.register') }}">
+                            <i class="fas fa-user-plus"></i> Register
+                        </a>
+                    </li>
+                {% endif %}
+            </ul>
+        </div>
+    </div>
+</nav>
+
+
+<!-- ============================================================
+     lsuite/templates/components/flash_messages.html
+     ============================================================ -->
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flash-messages mt-3">
+            {% for category, message in messages %}
+                <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                    {% if category == 'success' %}
+                        <i class="fas fa-check-circle"></i>
+                    {% elif category == 'danger' or category == 'error' %}
+                        <i class="fas fa-exclamation-circle"></i>
+                    {% elif category == 'warning' %}
+                        <i class="fas fa-exclamation-triangle"></i>
+                    {% else %}
+                        <i class="fas fa-info-circle"></i>
+                    {% endif %}
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+
+<!-- ============================================================
+     lsuite/templates/components/pagination.html
+     ============================================================ -->
+{% if pagination.pages > 1 %}
+<nav aria-label="Page navigation">
+    <ul class="pagination justify-content-center">
+        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for(request.endpoint, page=pagination.prev_num, **request.args) if pagination.has_prev else '#' }}">
+                Previous
+            </a>
+        </li>
+        
+        {% for page_num in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if page_num %}
+                <li class="page-item {% if page_num == pagination.page %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for(request.endpoint, page=page_num, **request.args) }}">
+                        {{ page_num }}
+                    </a>
+                </li>
+            {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">...</span>
+                </li>
+            {% endif %}
+        {% endfor %}
+        
+        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+            <a class="page-link" href="{{ url_for(request.endpoint, page=pagination.next_num, **request.args) if pagination.has_next else '#' }}">
+                Next
+            </a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
+
+<!-- ============================================================
+     lsuite/templates/main/index.html - Dashboard
+     ============================================================ -->
+{% extends "base.html" %}
+
+{% block title %}Dashboard - LSuite{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
+    <h1 class="h2">Dashboard</h1>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card text-white bg-primary mb-3">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-envelope"></i> Statements</h5>
+                <p class="card-text display-6">{{ stats.statements }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-success mb-3">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-exchange-alt"></i> Transactions</h5>
+                <p class="card-text display-6">{{ stats.transactions }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-info mb-3">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-tags"></i> Categorized</h5>
+                <p class="card-text display-6">{{ stats.categorized }}</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-white bg-warning mb-3">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-sync"></i> Synced</h5>
+                <p class="card-text display-6">{{ stats.synced }}</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h5><i class="fas fa-bolt"></i> Quick Actions</h5>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4 mb-2">
+                <form method="POST" action="{{ url_for('gmail.import_statements') }}">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-download"></i> Import from Gmail
+                    </button>
+                </form>
+            </div>
+            <div class="col-md-4 mb-2">
+                <form method="POST" action="{{ url_for('bridge.auto_categorize') }}">
+                    <button type="submit" class="btn btn-info w-100">
+                        <i class="fas fa-magic"></i> Auto-Categorize
+                    </button>
+                </form>
+            </div>
+            <div class="col-md-4 mb-2">
+                <form method="POST" action="{{ url_for('bridge.bulk_sync') }}">
+                    <button type="submit" class="btn btn-success w-100" 
+                            {% if not erpnext_config %}disabled{% endif %}>
+                        <i class="fas fa-cloud-upload-alt"></i> Sync to ERPNext
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% if ready_to_sync > 0 %}
+        <div class="alert alert-info mt-3" role="alert">
+            <i class="fas fa-info-circle"></i> 
+            <strong>{{ ready_to_sync }}</strong> transactions are ready to sync to ERPNext
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent Activity -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-clock"></i> Recent Statements</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_statements %}
+                <div class="list-group">
+                    {% for statement in recent_statements %}
+                    <a href="{{ url_for('gmail.statement_detail', id=statement.id) }}" 
+                       class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">{{ statement.subject[:50] }}...</h6>
+                            <small>{{ statement.date.strftime('%Y-%m-%d') }}</small>
+                        </div>
+                        <small class="text-muted">{{ statement.sender }}</small>
+                        <span class="badge bg-{{ 'success' if statement.state == 'parsed' else 'secondary' }}">
+                            {{ statement.state }}
+                        </span>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted">No statements yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5><i class="fas fa-list"></i> Recent Transactions</h5>
+            </div>
+            <div class="card-body">
+                {% if recent_transactions %}
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Description</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for trans in recent_transactions %}
+                            <tr>
+                                <td>{{ trans.date }}</td>
+                                <td>{{ trans.description[:30] }}...</td>
+                                <td class="text-{{ 'danger' if trans.transaction_type == 'debit' else 'success' }}">
+                                    R{{ "%.2f"|format(trans.amount) }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted">No transactions yet</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
