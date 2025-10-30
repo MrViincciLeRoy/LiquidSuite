@@ -86,6 +86,29 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     
+    env:
+      # Database configuration - try multiple variable names
+      DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
+      SQLALCHEMY_DATABASE_URI: postgresql://test_user:test_password@localhost:5432/lsuite_test
+      TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
+      
+      # Redis/Celery
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/0
+      
+      # Flask configuration
+      SECRET_KEY: test-secret-key-for-ci-cd-pipeline
+      FLASK_ENV: testing
+      FLASK_APP: app.py
+      TESTING: "true"
+      
+      # PostgreSQL client configuration
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: test_user
+      PGPASSWORD: test_password
+      PGDATABASE: lsuite_test
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -109,32 +132,105 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
       
-      - name: Wait for PostgreSQL
+      - name: Wait for services
         run: |
-          until pg_isready -h localhost -p 5432 -U test_user; do
-            echo "Waiting for PostgreSQL..."
+          echo "Waiting for PostgreSQL..."
+          for i in {1..30}; do
+            if pg_isready -h localhost -p 5432 -U test_user 2>/dev/null; then
+              echo "PostgreSQL is ready!"
+              break
+            fi
+            echo "Attempt $i: PostgreSQL not ready yet..."
+            sleep 2
+          done
+          
+          echo "Waiting for Redis..."
+          for i in {1..30}; do
+            if redis-cli -h localhost ping 2>/dev/null | grep -q PONG; then
+              echo "Redis is ready!"
+              break
+            fi
+            echo "Attempt $i: Redis not ready yet..."
             sleep 2
           done
       
-      - name: Initialize database
-        env:
-          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
-          CELERY_BROKER_URL: redis://localhost:6379/0
-          CELERY_RESULT_BACKEND: redis://localhost:6379/0
-          SECRET_KEY: test-secret-key-for-ci
-          FLASK_ENV: testing
+      - name: Verify database connection
         run: |
-          python -c "from lsuite import create_app; from lsuite.extensions import db; app = create_app('testing'); app.app_context().push(); db.create_all()"
+          echo "Testing direct database connection..."
+          psql -h localhost -U test_user -d lsuite_test -c "SELECT version();"
+          echo "Database connection successful!"
+      
+      - name: Debug configuration
+        run: |
+          python -c "
+          import os
+          import sys
+          
+          print('=' * 60)
+          print('ENVIRONMENT VARIABLES')
+          print('=' * 60)
+          print(f'DATABASE_URL: {os.getenv(\"DATABASE_URL\")}')
+          print(f'SQLALCHEMY_DATABASE_URI: {os.getenv(\"SQLALCHEMY_DATABASE_URI\")}')
+          print(f'TEST_DATABASE_URL: {os.getenv(\"TEST_DATABASE_URL\")}')
+          print(f'FLASK_ENV: {os.getenv(\"FLASK_ENV\")}')
+          print(f'TESTING: {os.getenv(\"TESTING\")}')
+          print('=' * 60)
+          
+          # Try importing and checking config
+          try:
+              from lsuite import create_app
+              app = create_app('testing')
+              print('APP CONFIGURATION')
+              print('=' * 60)
+              print(f'Config class: {app.config.__class__.__name__}')
+              print(f'SQLALCHEMY_DATABASE_URI: {app.config.get(\"SQLALCHEMY_DATABASE_URI\")}')
+              print(f'TESTING: {app.config.get(\"TESTING\")}')
+              print('=' * 60)
+          except Exception as e:
+              print(f'Error importing app: {e}')
+              import traceback
+              traceback.print_exc()
+          "
+      
+      - name: Create test database tables
+        run: |
+          python << 'EOF'
+          import os
+          import sys
+          
+          # Set database URL explicitly before imports
+          os.environ['SQLALCHEMY_DATABASE_URI'] = 'postgresql://test_user:test_password@localhost:5432/lsuite_test'
+          
+          try:
+              from lsuite import create_app
+              from lsuite.extensions import db
+              
+              print("Creating app with testing config...")
+              app = create_app('testing')
+              
+              print(f"Database URI: {app.config.get('SQLALCHEMY_DATABASE_URI')}")
+              
+              with app.app_context():
+                  print("Creating all database tables...")
+                  db.create_all()
+                  print("✅ Database tables created successfully!")
+                  
+                  # Verify tables were created
+                  from sqlalchemy import inspect
+                  inspector = inspect(db.engine)
+                  tables = inspector.get_table_names()
+                  print(f"Created tables: {tables}")
+                  
+          except Exception as e:
+              print(f"❌ Error: {e}")
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
+          EOF
       
       - name: Run tests with coverage
-        env:
-          DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
-          CELERY_BROKER_URL: redis://localhost:6379/0
-          CELERY_RESULT_BACKEND: redis://localhost:6379/0
-          SECRET_KEY: test-secret-key-for-ci
-          FLASK_ENV: testing
         run: |
-          pytest tests/ -v --cov=lsuite --cov-report=xml --cov-report=term
+          pytest tests/ -v --cov=lsuite --cov-report=xml --cov-report=term --tb=short
       
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
