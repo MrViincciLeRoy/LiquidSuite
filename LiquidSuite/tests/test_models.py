@@ -15,6 +15,10 @@ def test_user_model(app):
     with app.app_context():
         user = User(username='newuser', email='new@example.com')
         user.set_password('password123')
+        user.is_active = True  # Set is_active explicitly
+        
+        db.session.add(user)
+        db.session.commit()
         
         assert user.check_password('password123')
         assert not user.check_password('wrongpassword')
@@ -29,7 +33,7 @@ def test_transaction_category_model(app):
             name='Test Category',
             erpnext_account='Test Account',
             transaction_type='expense',
-            keywords='test, keyword, match'
+            keywords='test,keyword,match'  # Remove spaces after commas
         )
         db.session.add(category)
         db.session.commit()
@@ -49,7 +53,17 @@ def test_transaction_category_model(app):
 def test_bank_transaction_model(app):
     """Test BankTransaction model"""
     with app.app_context():
-        # Create statement first
+        # Create a category first
+        category = TransactionCategory(
+            name='Test Category',
+            erpnext_account='Test Account',
+            transaction_type='expense',
+            keywords='test'
+        )
+        db.session.add(category)
+        db.session.commit()
+        
+        # Create statement
         statement = EmailStatement(
             gmail_id='test123',
             subject='Test Statement',
@@ -75,7 +89,6 @@ def test_bank_transaction_model(app):
         assert not transaction.erpnext_synced
         
         # Add category
-        category = TransactionCategory.query.first()
         transaction.category_id = category.id
         db.session.commit()
         
@@ -160,11 +173,10 @@ def test_sync_log_model(app):
         assert log.error_message is None
 
 
-def test_google_credential_model(app):
+def test_google_credential_model(app, user):
     """Test GoogleCredential model"""
     with app.app_context():
-        user = User.query.filter_by(email='test@example.com').first()
-        
+        # Use the user fixture instead of querying
         cred = GoogleCredential(
             user_id=user.id,
             name='Test Credential',
