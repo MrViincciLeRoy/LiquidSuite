@@ -1,0 +1,61 @@
+# ============================================================================
+# render.yaml - Render Blueprint for LSuite
+# ============================================================================
+
+services:
+  - type: web
+    name: lsuite-web
+    env: docker
+    dockerfilePath: ./LiquidSuite/Deployment/Dockerfile
+    dockerContext: ./LiquidSuite
+    plan: free
+    region: oregon
+    
+    envVars:
+      - key: FLASK_ENV
+        value: production
+      
+      - key: FLASK_APP
+        value: app.py
+      
+      - key: DATABASE_URL
+        sync: false
+      
+      - key: SQLALCHEMY_DATABASE_URI
+        sync: false
+      
+      - key: CELERY_BROKER_URL
+        sync: false
+      
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      
+      - key: SECRET_KEY
+        generateValue: true
+      
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      
+      - key: GOOGLE_REDIRECT_URI
+        value: https://lsuite-web.onrender.com/gmail/oauth/callback
+      
+      - key: ERPNEXT_BASE_URL
+        sync: false
+      
+      - key: ERPNEXT_API_KEY
+        sync: false
+      
+      - key: ERPNEXT_API_SECRET
+        sync: false
+      
+      - key: LOG_LEVEL
+        value: INFO
+      
+      - key: LOG_FILE
+        value: /var/log/lsuite.log
+    
+    healthCheckPath: /
+    autoDeploy: true
