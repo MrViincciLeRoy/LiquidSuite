@@ -77,7 +77,23 @@ def index():
         ready_to_sync=ready_to_sync
     )
 
-
+@main_bp.route('/api/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        # Check database connection
+        from lsuite.extensions import db
+        db.session.execute('SELECT 1')
+        db_status = 'healthy'
+    except Exception as e:
+        db_status = f'unhealthy: {str(e)}'
+    
+    return {
+        'status': 'ok',
+        'database': db_status,
+        'timestamp': datetime.utcnow().isoformat()
+    }, 200
+    
 @main_bp.route('/about')
 def about():
     """About page"""
