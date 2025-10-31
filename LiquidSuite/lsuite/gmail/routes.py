@@ -28,7 +28,21 @@ def credentials():
     creds = GoogleCredential.query.filter_by(user_id=current_user.id).all()
     return render_template('gmail/credentials.html', credentials=creds)
 
-
+@gmail_bp.route('/credentials/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_credential(id):
+    """Delete a credential"""
+    cred = GoogleCredential.query.get_or_404(id)
+    
+    if cred.user_id != current_user.id:
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('gmail.credentials'))
+    
+    db.session.delete(cred)
+    db.session.commit()
+    
+    flash('Credential deleted successfully!', 'success')
+    return redirect(url_for('gmail.credentials'))
 @gmail_bp.route('/credentials/new', methods=['GET', 'POST'])
 @login_required
 def new_credential():
