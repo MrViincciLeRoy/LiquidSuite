@@ -26,6 +26,10 @@ class PDFParser:
         """
         text = self._extract_text_from_pdf(pdf_data, password)
         
+        # Log extracted text for debugging
+        logger.info(f"Extracted text length: {len(text)} characters")
+        logger.debug(f"First 500 chars: {text[:500]}")
+        
         if bank_name == 'tymebank':
             return self._parse_tymebank(text)
         elif bank_name == 'capitec':
@@ -78,46 +82,91 @@ class PDFParser:
         return text
     
     def _parse_tymebank(self, text):
-        """Parse TymeBank PDF format"""
+        """Parse TymeBank PDF format
+        
+        TymeBank format:
+        Date Description Fees Money Out Money In Balance
+        04 Sep 2025 EFT for CAPITEC S SEANEGO - - 250.00 250.05
+        """
         transactions = []
         
-        # TymeBank patterns
-        patterns = [
-            # Pattern: 12 Jan 2024 | Description | -R1,234.56
-            (r'(\d{2}\s+\w{3}\s+\d{4})\s*[|\|]\s*([^|\|]+?)\s*[|\|]\s*(-?R?[\d,]+\.\d{2})', '%d %b %Y'),
-            # Pattern: 2024-01-12 Description R1234.56
-            (r'(\d{4}-\d{2}-\d{2})\s+([^\d\-\+R]+?)\s+(-?R?[\d,]+\.\d{2})', '%Y-%m-%d'),
-            # Pattern: 12/01/2024 Description R1234.56
-            (r'(\d{2}/\d{2}/\d{4})\s+([^\d\-\+R]+?)\s+(-?R?[\d,]+\.\d{2})', '%d/%m/%Y'),
-        ]
+        # Pattern to match TymeBank rows
+        # Date (DD Mon YYYY) followed by description, then amounts (-, amount, or -)
+        # Pattern: 04 Sep 2025 Description - 63.00 - 187.05
+        # or:      04 Sep 2025 Description - - 250.00 250.05
+        # or:      04 Sep 2025 Description 70.00 - - 930.05
         
-        for pattern, date_format in patterns:
-            matches = re.findall(pattern, text, re.MULTILINE)
+        pattern = r'(\d{1,2}\s+\w{3}\s+\d{4})\s+(.*?)\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})'
+        
+        matches = re.findall(pattern, text, re.MULTILINE)
+        
+        if matches:
+            logger.info(f"Found {len(matches)} TymeBank transaction rows")
             
-            if matches:
-                logger.info(f"Found {len(matches)} TymeBank transactions with pattern: {pattern}")
-                
-                for match in matches:
-                    try:
-                        trans_date = datetime.strptime(match[0].strip(), date_format).date()
-                        description = match[1].strip()
-                        amount_str = match[2].replace('R', '').replace(',', '').strip()
+            for match in matches:
+                try:
+                    # Parse date
+                    date_str = match[0].strip()
+                    trans_date = datetime.strptime(date_str, '%d %b %Y').date()
+                    
+                    # Get description
+                    description = match[1].strip()
+                    
+                    # Clean description - remove extra whitespace
+                    description = ' '.join(description.split())
+                    
+                    # Skip if description is too short or looks like a header
+                    if len(description) < 3 or 'Description' in description:
+                        continue
+                    
+                    # Parse amounts (Fees, Money Out, Money In, Balance)
+                    fees_str = match[2].strip()
+                    money_out_str = match[3].strip()
+                    money_in_str = match[4].strip()
+                    # balance_str = match[5].strip()  # We don't need balance
+                    
+                    # Determine transaction type and amount
+                    amount = 0
+                    trans_type = 'debit'
+                    
+                    # Check Money In first (credits)
+                    if money_in_str != '-':
+                        amount_str = money_in_str.replace(',', '').replace(' ', '').strip()
                         amount = float(amount_str)
-                        
+                        trans_type = 'credit'
+                    # Then check Money Out (debits)
+                    elif money_out_str != '-':
+                        amount_str = money_out_str.replace(',', '').replace(' ', '').strip()
+                        amount = float(amount_str)
+                        trans_type = 'debit'
+                    # Then check Fees (also debits)
+                    elif fees_str != '-':
+                        amount_str = fees_str.replace(',', '').replace(' ', '').strip()
+                        amount = float(amount_str)
+                        trans_type = 'debit'
+                        description = f"{description} (Fee)"
+                    else:
+                        # No amount found, skip this transaction
+                        continue
+                    
+                    if amount > 0:
                         transactions.append({
                             'date': trans_date,
                             'description': description,
-                            'amount': abs(amount),
-                            'type': 'debit' if amount < 0 else 'credit',
+                            'amount': amount,
+                            'type': trans_type,
                             'reference': f"TYME-{trans_date.strftime('%Y%m%d')}-{len(transactions)}"
                         })
                         
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"Failed to parse TymeBank transaction: {e}")
-                        continue
-                
-                if transactions:
-                    break  # Use first matching pattern
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse TymeBank transaction: {e} - Match: {match}")
+                    continue
+        
+        if not transactions:
+            logger.warning("No transactions found with TymeBank pattern")
+            logger.debug(f"Text sample for debugging:\n{text[:1000]}")
+        else:
+            logger.info(f"Successfully parsed {len(transactions)} TymeBank transactions")
         
         return transactions
     
