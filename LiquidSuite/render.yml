@@ -13,7 +13,7 @@ services:
     dockerfilePath: ./Deployment/Dockerfile
     dockerContext: .
     plan: free
-    region: oregon  # or singapore/frankfurt based on your location
+    region: oregon
     
     # Environment Variables
     envVars:
@@ -26,14 +26,17 @@ services:
       
       # Database (Aiven PostgreSQL - External)
       - key: DATABASE_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false
+      
+      - key: SQLALCHEMY_DATABASE_URI
+        sync: false
       
       # Cache/Queue (Aiven Valkey - External)
       - key: CELERY_BROKER_URL
-        sync: false  # Set manually in Render dashboard
+        sync: false
       
       - key: CELERY_RESULT_BACKEND
-        sync: false  # Set manually in Render dashboard
+        sync: false
       
       # Security
       - key: SECRET_KEY
@@ -66,23 +69,12 @@ services:
       - key: LOG_FILE
         value: /var/log/lsuite.log
     
-    # Health Check
-    healthCheckPath: /api/health
+    # Health Check - using root endpoint
+    healthCheckPath: /
     
     # Auto-deploy from main branch
     autoDeploy: true
-    
-    # Build Command (optional - Docker handles this)
-    # buildCommand: pip install -r requirements.txt
-    
-    # Start Command (defined in Dockerfile)
-    # startCommand: gunicorn -w 4 -b 0.0.0.0:10000 app:app
 
 # ============================================================================
 # NO DATABASES SECTION - Using External Aiven Services
 # ============================================================================
-# We're not using Render's managed databases because:
-# 1. Free PostgreSQL expires data after 30 days
-# 2. Aiven provides better free tier (1GB, no expiry)
-# 3. Valkey is not available on Render free tier
-# 4. External databases give us more control and portability
