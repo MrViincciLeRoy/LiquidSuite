@@ -1,16 +1,4 @@
 """
-Gmail Blueprint - Handles Gmail integration
-"""
-from flask import Blueprint
-
-gmail_bp = Blueprint('gmail', __name__, template_folder='templates')
-
-from lsuite.gmail import routes
-
-# ============================================================================
-# gmail/routes.py
-# ============================================================================
-"""
 Gmail Routes
 """
 from flask import render_template, redirect, url_for, flash, request, current_app
@@ -28,21 +16,7 @@ def credentials():
     creds = GoogleCredential.query.filter_by(user_id=current_user.id).all()
     return render_template('gmail/credentials.html', credentials=creds)
 
-@gmail_bp.route('/credentials/<int:id>/delete', methods=['POST'])
-@login_required
-def delete_credential(id):
-    """Delete a credential"""
-    cred = GoogleCredential.query.get_or_404(id)
-    
-    if cred.user_id != current_user.id:
-        flash('Unauthorized', 'danger')
-        return redirect(url_for('gmail.credentials'))
-    
-    db.session.delete(cred)
-    db.session.commit()
-    
-    flash('Credential deleted successfully!', 'success')
-    return redirect(url_for('gmail.credentials'))
+
 @gmail_bp.route('/credentials/new', methods=['GET', 'POST'])
 @login_required
 def new_credential():
@@ -60,6 +34,23 @@ def new_credential():
         return redirect(url_for('gmail.credentials'))
     
     return render_template('gmail/credential_form.html')
+
+
+@gmail_bp.route('/credentials/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_credential(id):
+    """Delete a credential"""
+    cred = GoogleCredential.query.get_or_404(id)
+    
+    if cred.user_id != current_user.id:
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('gmail.credentials'))
+    
+    db.session.delete(cred)
+    db.session.commit()
+    
+    flash('Credential deleted successfully!', 'success')
+    return redirect(url_for('gmail.credentials'))
 
 
 @gmail_bp.route('/credentials/<int:id>/authenticate')
@@ -163,6 +154,14 @@ def parse_statement(id):
     if not cred:
         flash('No authenticated Google credential found', 'warning')
         return redirect(url_for('gmail.credentials'))
+    
+    # Get the password from the form
+    pdf_password = request.form.get('pdf_password', '').strip()
+    
+    # Update statement with password if provided
+    if pdf_password:
+        statement.pdf_password = pdf_password
+        db.session.commit()
     
     service = GmailService(current_app)
     
