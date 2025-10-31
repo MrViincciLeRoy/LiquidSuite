@@ -87,22 +87,15 @@ jobs:
           --health-retries 5
     
     env:
-      # Database configuration - try multiple variable names
       DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
       SQLALCHEMY_DATABASE_URI: postgresql://test_user:test_password@localhost:5432/lsuite_test
       TEST_DATABASE_URL: postgresql://test_user:test_password@localhost:5432/lsuite_test
-      
-      # Redis/Celery
       CELERY_BROKER_URL: redis://localhost:6379/0
       CELERY_RESULT_BACKEND: redis://localhost:6379/0
-      
-      # Flask configuration
       SECRET_KEY: test-secret-key-for-ci-cd-pipeline
       FLASK_ENV: testing
       FLASK_APP: app.py
       TESTING: "true"
-      
-      # PostgreSQL client configuration
       PGHOST: localhost
       PGPORT: 5432
       PGUSER: test_user
@@ -198,7 +191,6 @@ jobs:
           import os
           import sys
           
-          # Set database URL explicitly before imports
           os.environ['SQLALCHEMY_DATABASE_URI'] = 'postgresql://test_user:test_password@localhost:5432/lsuite_test'
           
           try:
@@ -215,7 +207,6 @@ jobs:
                   db.create_all()
                   print("✅ Database tables created successfully!")
                   
-                  # Verify tables were created
                   from sqlalchemy import inspect
                   inspector = inspect(db.engine)
                   tables = inspector.get_table_names()
@@ -291,11 +282,12 @@ jobs:
           context: ./LiquidSuite
           file: ./LiquidSuite/Deployment/Dockerfile
           push: false
-          tags: lsuite:${{ github.sha }}
+          tags: lsuite:latest
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
       - name: Test Docker image
-        working-directory: .
+        working-directory: ./LiquidSuite
         run: |
-          docker run --rm lsuite:${{ github.sha }} python -c "from lsuite import create_app; app = create_app('production'); print('✓ App imports successful')"
+          docker run --rm lsuite:latest python -c "from lsuite import create_app; app = create_app('production'); print('✓ App imports successful')"
