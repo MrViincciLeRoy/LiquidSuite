@@ -131,8 +131,7 @@ class PDFParser:
                         
                         # Check if this line has the amounts pattern (4 numbers/dashes followed by balance)
                         # Pattern: - 512.46 - 417.59  OR  70.00 - - 930.05
-                        amount_match = re.match(
-                            r'^(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})\s*
+                        amount_match = re.match(r'^(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})\s*$', next_line) 
     
     def _parse_capitec(self, text):
         """Parse Capitec PDF format"""
