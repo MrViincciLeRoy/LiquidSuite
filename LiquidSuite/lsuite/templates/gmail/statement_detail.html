@@ -118,7 +118,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    {% for trans in statement.transactions.order_by('date desc').all() %}
+                    {% for trans in statement.transactions.all()|sort(attribute='date', reverse=True) %}
                     <tr>
                         <td>{{ trans.date }}</td>
                         <td>{{ trans.description[:50] }}{% if trans.description|length > 50 %}...{% endif %}</td>
