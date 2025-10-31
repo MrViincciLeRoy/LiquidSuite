@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
     libpq-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (for layer caching)
@@ -35,9 +36,9 @@ USER lsuite
 # Expose port (Render uses PORT env variable, defaults to 10000)
 EXPOSE 10000
 
-# Health check
+# Health check - using a simple curl to root endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:10000/api/health')"
+    CMD curl -f http://localhost:${PORT:-10000}/ || exit 1
 
 # Start command - Render will override PORT via env
 CMD gunicorn --workers=4 \
