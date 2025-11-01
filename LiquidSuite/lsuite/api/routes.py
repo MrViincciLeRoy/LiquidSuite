@@ -164,7 +164,8 @@ def auto_categorize_api():
 @login_required
 def sync_transactions_api():
     """Sync transactions to ERPNext"""
-    config = ERPNextConfig.query.filter_by(active=True).first()
+    # ? FIXED: Use is_active instead of active
+    config = ERPNextConfig.query.filter_by(is_active=True).first()
     
     if not config:
         return jsonify({'error': 'No active ERPNext configuration found'}), 400
