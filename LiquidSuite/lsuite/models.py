@@ -80,6 +80,38 @@ class BankAccount(db.Model):
     
     def __repr__(self):
         return f'<BankAccount {self.account_name}>'
+        
+class TransactionCategory(db.Model):
+    """Transaction categorization for ERPNext mapping"""
+    __tablename__ = 'transaction_categories'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    erpnext_account = db.Column(db.String(200), nullable=False)
+    transaction_type = db.Column(db.String(20), nullable=False)  # expense, income, transfer
+    keywords = db.Column(db.Text)  # Comma-separated
+    active = db.Column(db.Boolean, default=True)
+    color = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    transactions = db.relationship('BankTransaction', backref='category', lazy='dynamic')
+    
+    def get_keywords_list(self):
+        """Return keywords as a list"""
+        if not self.keywords:
+            return []
+        return [k.strip().lower() for k in self.keywords.split(',')]
+    
+    def matches_description(self, description):
+        """Check if any keyword matches the description"""
+        if not description:
+            return False
+        description_lower = description.lower()
+        return any(keyword in description_lower for keyword in self.get_keywords_list())
+    
+    def __repr__(self):
+        return f'<TransactionCategory {self.name}>'
 
 
 class Transaction(db.Model):
