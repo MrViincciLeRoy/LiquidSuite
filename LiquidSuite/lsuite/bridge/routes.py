@@ -116,37 +116,6 @@ def category_transactions(id):
                          transactions=transactions)
 
 
-@bridge_bp.route('/bulk-operations')
-@login_required
-def bulk_operations():
-    """Bulk operations dashboard"""
-    
-    # Get statistics
-    stats = {
-        'total': BankTransaction.query.count(),
-        'uncategorized': BankTransaction.query.filter_by(category_id=None).count(),
-        'categorized': BankTransaction.query.filter(BankTransaction.category_id.isnot(None)).count(),
-        'synced': BankTransaction.query.filter_by(erpnext_synced=True).count(),
-        'ready_to_sync': BankTransaction.query.filter(
-            BankTransaction.category_id.isnot(None),
-            BankTransaction.erpnext_synced == False
-        ).count(),
-    }
-    
-    # Get ERPNext config status
-    erpnext_config = ERPNextConfig.query.filter_by(active=True).first()
-    
-    # Recent activity
-    recent_transactions = BankTransaction.query.order_by(
-        BankTransaction.date.desc()
-    ).limit(10).all()
-    
-    return render_template('bridge/bulk_operations.html',
-                         stats=stats,
-                         erpnext_config=erpnext_config,
-                         recent_transactions=recent_transactions)
-
-
 @bridge_bp.route('/bulk-operations/auto-categorize', methods=['POST'])
 @login_required
 def auto_categorize():
@@ -167,36 +136,6 @@ def auto_categorize():
     return redirect(url_for('bridge.bulk_operations'))
 
 
-@bridge_bp.route('/bulk-operations/sync-to-erpnext', methods=['POST'])
-@login_required
-def bulk_sync():
-    """Bulk sync transactions to ERPNext"""
-    
-    config = ERPNextConfig.query.filter_by(active=True).first()
-    if not config:
-        flash('❌ No active ERPNext configuration found', 'danger')
-        return redirect(url_for('bridge.bulk_operations'))
-    
-    service = BulkSyncService(config)
-    
-    try:
-        success, failed, total = service.sync_all_ready()
-        
-        if success > 0:
-            if failed == 0:
-                flash(f'✅ Successfully synced all {success} transactions!', 'success')
-            else:
-                flash(f'⚠️ Synced {success} transactions, {failed} failed. Check sync logs for details.', 'warning')
-        else:
-            if total == 0:
-                flash('ℹ️ No transactions ready to sync. Categorize transactions first.', 'info')
-            else:
-                flash(f'❌ Failed to sync {failed} transactions. Check sync logs for details.', 'danger')
-        
-    except Exception as e:
-        flash(f'❌ Error during sync: {str(e)}', 'danger')
-    
-    return redirect(url_for('bridge.bulk_operations'))
 
 
 @bridge_bp.route('/bulk-operations/preview-categorization', methods=['POST'])
@@ -258,4 +197,67 @@ def uncategorize_transaction(id):
     
     flash('Transaction uncategorized', 'info')
     return redirect(request.referrer or url_for('gmail.transactions'))
+
+@bridge_bp.route('/bulk-operations')
+@login_required
+def bulk_operations():
+    """Bulk operations dashboard"""
+    
+    # Get statistics
+    stats = {
+        'total': BankTransaction.query.count(),
+        'uncategorized': BankTransaction.query.filter_by(category_id=None).count(),
+        'categorized': BankTransaction.query.filter(BankTransaction.category_id.isnot(None)).count(),
+        'synced': BankTransaction.query.filter_by(erpnext_synced=True).count(),
+        'ready_to_sync': BankTransaction.query.filter(
+            BankTransaction.category_id.isnot(None),
+            BankTransaction.erpnext_synced == False
+        ).count(),
+    }
+    
+    # ✅ FIXED: Use is_active instead of active
+    erpnext_config = ERPNextConfig.query.filter_by(is_active=True).first()
+    
+    # Recent activity
+    recent_transactions = BankTransaction.query.order_by(
+        BankTransaction.date.desc()
+    ).limit(10).all()
+    
+    return render_template('bridge/bulk_operations.html',
+                         stats=stats,
+                         erpnext_config=erpnext_config,
+                         recent_transactions=recent_transactions)
+
+
+@bridge_bp.route('/bulk-operations/sync-to-erpnext', methods=['POST'])
+@login_required
+def bulk_sync():
+    """Bulk sync transactions to ERPNext"""
+    
+    # ✅ FIXED: Use is_active instead of active
+    config = ERPNextConfig.query.filter_by(is_active=True).first()
+    if not config:
+        flash('❌ No active ERPNext configuration found', 'danger')
+        return redirect(url_for('bridge.bulk_operations'))
+    
+    service = BulkSyncService(config)
+    
+    try:
+        success, failed, total = service.sync_all_ready()
+        
+        if success > 0:
+            if failed == 0:
+                flash(f'✅ Successfully synced all {success} transactions!', 'success')
+            else:
+                flash(f'⚠️ Synced {success} transactions, {failed} failed. Check sync logs for details.', 'warning')
+        else:
+            if total == 0:
+                flash('ℹ️ No transactions ready to sync. Categorize transactions first.', 'info')
+            else:
+                flash(f'❌ Failed to sync {failed} transactions. Check sync logs for details.', 'danger')
+        
+    except Exception as e:
+        flash(f'❌ Error during sync: {str(e)}', 'danger')
+    
+    return redirect(url_for('bridge.bulk_operations'))
 
