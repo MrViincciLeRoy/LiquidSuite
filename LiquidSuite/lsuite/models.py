@@ -145,7 +145,9 @@ class Transaction(db.Model):
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    #transactions = db.relationship('BankTransaction', back_populates='category', lazy='dynamic')
+
+
     @property
     def amount(self):
         """Get transaction amount (credit - debit)"""
@@ -224,7 +226,11 @@ class BankTransaction(db.Model):
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'), nullable=True)
     
+    # Relationship to category (many-to-one: many transactions to one category)
+    category = db.relationship('TransactionCategory', back_populates='transactions')
+
     @property
     def amount(self):
         """Get transaction amount"""
