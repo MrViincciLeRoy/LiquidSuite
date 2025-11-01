@@ -1,11 +1,11 @@
 # ============================================================================
-# lsuite/main/routes.py - COMPLETELY SAFE VERSION
+# lsuite/main/routes.py - CORRECTED VERSION
 # ============================================================================
 """
 Main Blueprint - Dashboard and Home
 """
-from flask import render_template
-from flask_login import login_required
+from flask import render_template, jsonify
+from flask_login import login_required, current_user
 from lsuite.models import (
     EmailStatement, BankTransaction, TransactionCategory,
     ERPNextConfig, ERPNextSyncLog
@@ -103,21 +103,24 @@ def index():
     )
 
 
-@main_bp.route('/api/health')
+@main_bp.route('/health')
 def health_check():
-    """Health check endpoint for monitoring"""
+    """Health check endpoint for monitoring (no authentication required)"""
     try:
         from lsuite.extensions import db
+        # Test database connection
         db.session.execute(db.text('SELECT 1'))
         db_status = 'healthy'
     except Exception as e:
         db_status = f'unhealthy: {str(e)}'
     
-    return {
+    return jsonify({
         'status': 'ok',
+        'app': 'LSuite',
+        'version': '1.0.0',
         'database': db_status,
         'timestamp': datetime.utcnow().isoformat()
-    }, 200
+    }), 200
 
 
 @main_bp.route('/about')
