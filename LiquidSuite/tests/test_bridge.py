@@ -57,6 +57,21 @@ def create_test_categories(app):
 
 def create_test_transactions(app, user_id):
     """Helper to create test transactions"""
+    from lsuite.models import BankAccount
+    
+    # Create a bank account first (required for transactions)
+    bank_account = BankAccount(
+        user_id=user_id,
+        account_name='Test Bank Account',
+        account_number='12345',
+        bank_name='Test Bank',
+        account_type='Savings',
+        balance=Decimal('10000.00')
+    )
+    db.session.add(bank_account)
+    db.session.flush()
+    
+    # Create statement
     statement = EmailStatement(
         user_id=user_id,
         email_id='test-statement-1',
@@ -69,9 +84,11 @@ def create_test_transactions(app, user_id):
     db.session.add(statement)
     db.session.flush()
     
+    # Create transactions
     transactions = [
         BankTransaction(
             user_id=user_id,
+            bank_account_id=bank_account.id,
             statement_id=statement.id,
             date=date.today(),
             description='Uber trip to office',
@@ -82,6 +99,7 @@ def create_test_transactions(app, user_id):
         ),
         BankTransaction(
             user_id=user_id,
+            bank_account_id=bank_account.id,
             statement_id=statement.id,
             date=date.today(),
             description='Coffee at Starbucks',
@@ -92,6 +110,7 @@ def create_test_transactions(app, user_id):
         ),
         BankTransaction(
             user_id=user_id,
+            bank_account_id=bank_account.id,
             statement_id=statement.id,
             date=date.today(),
             description='Unknown transaction',
