@@ -1,13 +1,12 @@
 # lsuite/models.py
 """
-Database models for LiquidSuite
-Maintains backwards compatibility for all imports
+Database models for LiquidSuite - COMPLETE FIXED VERSION
 """
 
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
-from lsuite import db
+from lsuite.extensions import db
 
 # =============================================================================
 # User Models
@@ -67,7 +66,7 @@ class BankAccount(db.Model):
     account_name = db.Column(db.String(200), nullable=False)
     account_number = db.Column(db.String(100))
     bank_name = db.Column(db.String(100))
-    account_type = db.Column(db.String(50))  # Savings, Checking, etc.
+    account_type = db.Column(db.String(50))
     currency = db.Column(db.String(3), default='ZAR')
     balance = db.Column(db.Numeric(15, 2), default=0.00)
     is_active = db.Column(db.Boolean, default=True)
@@ -80,7 +79,7 @@ class BankAccount(db.Model):
     
     def __repr__(self):
         return f'<BankAccount {self.account_name}>'
-        
+
 
 class Transaction(db.Model):
     """Bank transaction model (legacy)"""
@@ -102,7 +101,7 @@ class Transaction(db.Model):
     
     # Categorization
     category = db.Column(db.String(100))
-    tags = db.Column(db.String(500))  # Comma-separated tags
+    tags = db.Column(db.String(500))
     notes = db.Column(db.Text)
     
     # Reconciliation
@@ -113,8 +112,6 @@ class Transaction(db.Model):
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    #transactions = db.relationship('BankTransaction', back_populates='category', lazy='dynamic')
-
 
     @property
     def amount(self):
@@ -132,6 +129,7 @@ class Transaction(db.Model):
     
     def __repr__(self):
         return f'<Transaction {self.reference_number or self.id}>'
+
 
 class GoogleCredential(db.Model):
     """Google OAuth credentials storage"""
@@ -153,13 +151,6 @@ class GoogleCredential(db.Model):
         return f'<GoogleCredential {self.name}>'
 
 
-# URGENT FIX: Replace these sections in lsuite/models.py
-
-# ============================================================================
-# FIX 1: TransactionCategory (around line 84-100)
-# ============================================================================
-# REMOVE the 'backref' parameter, use 'back_populates' instead
-
 class TransactionCategory(db.Model):
     """Transaction categorization for ERPNext mapping"""
     __tablename__ = 'transaction_categories'
@@ -167,13 +158,13 @@ class TransactionCategory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)
     erpnext_account = db.Column(db.String(200), nullable=False)
-    transaction_type = db.Column(db.String(20), nullable=False)  # expense, income, transfer
-    keywords = db.Column(db.Text)  # Comma-separated
+    transaction_type = db.Column(db.String(20), nullable=False)
+    keywords = db.Column(db.Text)
     active = db.Column(db.Boolean, default=True)
     color = db.Column(db.Integer)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
-    # FIXED: Use back_populates instead of backref
+    # Relationship
     transactions = db.relationship('BankTransaction', back_populates='category', lazy='dynamic')
     
     def get_keywords_list(self):
@@ -193,18 +184,14 @@ class TransactionCategory(db.Model):
         return f'<TransactionCategory {self.name}>'
 
 
-# ============================================================================
-# FIX 2: BankTransaction (around line 215-250)
-# ============================================================================
-# The category field appears TWICE - remove the duplicate at line 226
-
 class BankTransaction(db.Model):
     """Bank transaction model for ERPNext integration"""
     __tablename__ = 'bank_transactions'
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    bank_account_id = db.Column(db.Integer, db.ForeignKey('bank_accounts.id'), nullable=False)
+    bank_account_id = db.Column(db.Integer, db.ForeignKey('bank_accounts.id'))
+    statement_id = db.Column(db.Integer, db.ForeignKey('email_statements.id'))
     
     # Transaction details
     date = db.Column(db.Date, nullable=False, index=True)
@@ -213,16 +200,16 @@ class BankTransaction(db.Model):
     reference_number = db.Column(db.String(100), index=True)
     
     # Amounts
-    deposit = db.Column(db.Numeric(15, 2), default=0.00)  # Credits
-    withdrawal = db.Column(db.Numeric(15, 2), default=0.00)  # Debits
+    deposit = db.Column(db.Numeric(15, 2), default=0.00)
+    withdrawal = db.Column(db.Numeric(15, 2), default=0.00)
     balance = db.Column(db.Numeric(15, 2))
     
     # Additional fields
     currency = db.Column(db.String(3), default='ZAR')
     unallocated_amount = db.Column(db.Numeric(15, 2))
     
-    # Categorization - REMOVE this duplicate 'category' string field
-    # category = db.Column(db.String(100))  # DELETE THIS LINE
+    # Categorization
+    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'))
     tags = db.Column(db.String(500))
     notes = db.Column(db.Text)
     
@@ -235,15 +222,14 @@ class BankTransaction(db.Model):
     erpnext_id = db.Column(db.String(100), index=True)
     erpnext_synced = db.Column(db.Boolean, default=False)
     erpnext_sync_date = db.Column(db.DateTime)
-    
-    # Foreign key to category (KEEP THIS - place it BEFORE the relationship)
-    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'), nullable=True)
+    erpnext_journal_entry = db.Column(db.String(100))
+    erpnext_error = db.Column(db.Text)
     
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
-    # Relationship to category (KEEP THIS)
+    # Relationship to category
     category = db.relationship('TransactionCategory', back_populates='transactions')
 
     @property
@@ -259,6 +245,11 @@ class BankTransaction(db.Model):
         elif self.withdrawal and self.withdrawal > 0:
             return 'withdrawal'
         return 'unknown'
+    
+    @property
+    def is_categorized(self):
+        """Check if transaction is categorized"""
+        return self.category_id is not None
     
     def to_erpnext_format(self):
         """Convert to ERPNext format"""
@@ -277,19 +268,20 @@ class BankTransaction(db.Model):
     def __repr__(self):
         return f'<BankTransaction {self.reference_number or self.id}>'
 
+
 # =============================================================================
-# Email Statement Models
+# Email Statement Models - FIXED VERSION
 # =============================================================================
 
 class EmailStatement(db.Model):
-    """Email statement model for Gmail integration"""
+    """Email statement model for Gmail integration - FIXED"""
     __tablename__ = 'email_statements'
     
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     
-    # Email details
-    email_id = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    # Email details - FIXED: using gmail_id and received_date
+    gmail_id = db.Column(db.String(255), unique=True, nullable=False, index=True)
     thread_id = db.Column(db.String(255), index=True)
     subject = db.Column(db.String(500))
     sender = db.Column(db.String(255))
@@ -300,15 +292,15 @@ class EmailStatement(db.Model):
     bank_name = db.Column(db.String(100))
     account_number = db.Column(db.String(100))
     
-    # Attachment info
-    has_attachments = db.Column(db.Boolean, default=False)
-    attachment_count = db.Column(db.Integer, default=0)
-    attachment_names = db.Column(db.Text)  # JSON list of filenames
+    # PDF details
+    has_pdf = db.Column(db.Boolean, default=False)
+    pdf_password = db.Column(db.String(100))
     
     # Processing status
+    state = db.Column(db.String(50), default='new')
     is_processed = db.Column(db.Boolean, default=False)
     processed_date = db.Column(db.DateTime)
-    transactions_extracted = db.Column(db.Integer, default=0)
+    transaction_count = db.Column(db.Integer, default=0)
     
     # Content
     body_text = db.Column(db.Text)
@@ -322,36 +314,10 @@ class EmailStatement(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    attachments = db.relationship('EmailAttachment', backref='email_statement', lazy='dynamic', cascade='all, delete-orphan')
+    transactions = db.relationship('BankTransaction', backref='statement', lazy='dynamic', cascade='all, delete-orphan')
     
     def __repr__(self):
-        return f'<EmailStatement {self.email_id}>'
-
-
-class EmailAttachment(db.Model):
-    """Email attachment model"""
-    __tablename__ = 'email_attachments'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    email_statement_id = db.Column(db.Integer, db.ForeignKey('email_statements.id'), nullable=False)
-    
-    filename = db.Column(db.String(255), nullable=False)
-    content_type = db.Column(db.String(100))
-    size = db.Column(db.Integer)  # Size in bytes
-    
-    # File storage
-    file_path = db.Column(db.String(500))  # Path to stored file
-    file_data = db.Column(db.LargeBinary)  # Binary data if stored in DB
-    
-    # Processing
-    is_processed = db.Column(db.Boolean, default=False)
-    processed_date = db.Column(db.DateTime)
-    
-    # Metadata
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    def __repr__(self):
-        return f'<EmailAttachment {self.filename}>'
+        return f'<EmailStatement {self.gmail_id}>'
 
 
 # =============================================================================
@@ -387,7 +353,7 @@ class Invoice(db.Model):
     currency = db.Column(db.String(3), default='ZAR')
     
     # Status
-    status = db.Column(db.String(50), default='draft', index=True)  # draft, sent, paid, overdue, cancelled
+    status = db.Column(db.String(50), default='draft', index=True)
     
     # ERPNext integration
     erpnext_id = db.Column(db.String(100), index=True)
@@ -462,11 +428,16 @@ class ERPNextConfig(db.Model):
     __tablename__ = 'erpnext_configs'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     
-    site_url = db.Column(db.String(255), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    base_url = db.Column(db.String(255), nullable=False)
     api_key = db.Column(db.String(255), nullable=False)
     api_secret = db.Column(db.String(255), nullable=False)
+    
+    default_company = db.Column(db.String(200))
+    bank_account = db.Column(db.String(200))
+    default_cost_center = db.Column(db.String(200))
     
     is_active = db.Column(db.Boolean, default=True)
     last_sync = db.Column(db.DateTime)
@@ -475,56 +446,30 @@ class ERPNextConfig(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def __repr__(self):
-        return f'<ERPNextConfig {self.site_url}>'
+        return f'<ERPNextConfig {self.name}>'
 
 
-class SyncLog(db.Model):
-    """Synchronization log model"""
-    __tablename__ = 'sync_logs'
+class ERPNextSyncLog(db.Model):
+    """ERPNext synchronization log model"""
+    __tablename__ = 'erpnext_sync_logs'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    config_id = db.Column(db.Integer, db.ForeignKey('erpnext_configs.id'), nullable=False)
     
-    sync_type = db.Column(db.String(50), nullable=False)  # transaction, invoice
-    direction = db.Column(db.String(20), nullable=False)  # upload, download
-    status = db.Column(db.String(20), nullable=False)  # success, failed, partial
+    record_type = db.Column(db.String(50), nullable=False)
+    record_id = db.Column(db.Integer, nullable=False)
     
-    records_processed = db.Column(db.Integer, default=0)
-    records_successful = db.Column(db.Integer, default=0)
-    records_failed = db.Column(db.Integer, default=0)
+    erpnext_doctype = db.Column(db.String(100))
+    erpnext_doc_name = db.Column(db.String(200))
     
+    status = db.Column(db.String(20), nullable=False)
     error_message = db.Column(db.Text)
-    sync_data = db.Column(db.JSON)  # Store sync details
     
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
-    completed_at = db.Column(db.DateTime)
+    sync_date = db.Column(db.DateTime, default=datetime.utcnow)
     
     def __repr__(self):
-        return f'<SyncLog {self.sync_type} {self.status}>'
+        return f'<ERPNextSyncLog {self.record_type}:{self.record_id} {self.status}>'
 
 
-# =============================================================================
-# Backwards Compatibility Aliases
-# =============================================================================
-
-# Create alias for ERPNextSyncLog (some code uses this name instead of SyncLog)
-ERPNextSyncLog = SyncLog
-
-# =============================================================================
-# Backwards Compatibility Exports
-# =============================================================================
-
-# Ensure all models are exported for backwards compatibility
-__all__ = [
-    'User',
-    'BankAccount',
-    'Transaction',
-    'BankTransaction',
-    'EmailStatement',
-    'EmailAttachment',
-    'Invoice',
-    'InvoiceItem',
-    'ERPNextConfig',
-    'SyncLog',
-    'ERPNextSyncLog',  # Alias for SyncLog
-]
+# Alias for backwards compatibility
+SyncLog = ERPNextSyncLog
