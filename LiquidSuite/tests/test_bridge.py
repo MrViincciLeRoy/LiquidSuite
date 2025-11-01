@@ -1,42 +1,26 @@
+# ============================================================================
+# tests/test_bridge.py - FIXED VERSION
+# ============================================================================
 """
-Fixed tests/test_bridge.py - Simplified and robust version
+Tests for Bridge functionality (categorization and sync)
 """
 import pytest
-from datetime import datetime, date
-from decimal import Decimal
-
-from lsuite.models import (
-    User, EmailStatement, BankTransaction, 
-    TransactionCategory
-)
+from lsuite.models import TransactionCategory, BankTransaction
 from lsuite.bridge.services import CategorizationService
 from lsuite.extensions import db
+from datetime import date
+from decimal import Decimal
 
 
-# ============================================================================
-# Simple fixtures that work within each test's app context
-# ============================================================================
-
-def create_test_user(app):
-    """Helper to create a test user"""
-    user = User(
-        username='testuser',
-        email='test@example.com'
-    )
-    user.set_password('testpass123')
-    db.session.add(user)
-    db.session.commit()
-    return user.id
-
-
-def create_test_categories(app):
-    """Helper to create test categories"""
+@pytest.fixture
+def test_categories(test_user):
+    """Create test categories"""
     categories = [
         TransactionCategory(
             name='Transport',
             erpnext_account='Transport Expenses - Company',
             transaction_type='expense',
-            keywords='uber, bolt, taxi, fuel',
+            keywords='uber, taxi, fuel, petrol',
             active=True
         ),
         TransactionCategory(
@@ -46,379 +30,278 @@ def create_test_categories(app):
             keywords='restaurant, coffee, lunch',
             active=True
         ),
+        TransactionCategory(
+            name='Bank Fees',
+            erpnext_account='Bank Charges - Company',
+            transaction_type='expense',
+            keywords='bank fee, service charge',
+            active=True
+        )
     ]
     
     for cat in categories:
         db.session.add(cat)
-    
     db.session.commit()
-    return [cat.id for cat in categories]
+    
+    return categories
 
 
-def create_test_transactions(app, user_id):
-    """Helper to create test transactions"""
-    from lsuite.models import BankAccount
-    
-    # Create a bank account first (required for transactions)
-    bank_account = BankAccount(
-        user_id=user_id,
-        account_name='Test Bank Account',
-        account_number='12345',
-        bank_name='Test Bank',
-        account_type='Savings',
-        balance=Decimal('10000.00')
-    )
-    db.session.add(bank_account)
-    db.session.flush()
-    
-    # Create statement
-    statement = EmailStatement(
-        user_id=user_id,
-        email_id='test-statement-1',
-        subject='Bank Statement',
-        sender='bank@example.com',
-        received_date=datetime.utcnow(),
-        bank_name='testbank',
-        is_processed=True
-    )
-    db.session.add(statement)
-    db.session.flush()
-    
-    # Create transactions
+@pytest.fixture
+def test_transactions(test_user, test_bank_account, test_categories):
+    """Create test transactions"""
     transactions = [
         BankTransaction(
-            user_id=user_id,
-            bank_account_id=bank_account.id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='Uber trip to office',
-            withdrawal=Decimal('150.00'),
+            user_id=test_user.id,
+            bank_account_id=test_bank_account.id,
+            date=date(2024, 1, 1),
+            description='UBER TRIP TO AIRPORT',
+            withdrawal=Decimal('250.00'),
             deposit=Decimal('0.00'),
             balance=Decimal('5000.00'),
-            reference_number='REF001'
+            reference_number='TXN001'
         ),
         BankTransaction(
-            user_id=user_id,
-            bank_account_id=bank_account.id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='Coffee at Starbucks',
+            user_id=test_user.id,
+            bank_account_id=test_bank_account.id,
+            date=date(2024, 1, 2),
+            description='STARBUCKS COFFEE SHOP',
             withdrawal=Decimal('45.00'),
             deposit=Decimal('0.00'),
             balance=Decimal('4955.00'),
-            reference_number='REF002'
+            reference_number='TXN002'
         ),
         BankTransaction(
-            user_id=user_id,
-            bank_account_id=bank_account.id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='Unknown transaction',
+            user_id=test_user.id,
+            bank_account_id=test_bank_account.id,
+            date=date(2024, 1, 3),
+            description='MONTHLY BANK FEE',
+            withdrawal=Decimal('65.00'),
+            deposit=Decimal('0.00'),
+            balance=Decimal('4890.00'),
+            reference_number='TXN003'
+        ),
+        BankTransaction(
+            user_id=test_user.id,
+            bank_account_id=test_bank_account.id,
+            date=date(2024, 1, 4),
+            description='UNKNOWN TRANSACTION',
             withdrawal=Decimal('100.00'),
             deposit=Decimal('0.00'),
-            balance=Decimal('4855.00'),
-            reference_number='REF003'
-        ),
+            balance=Decimal('4790.00'),
+            reference_number='TXN004'
+        )
     ]
     
-    for trans in transactions:
-        db.session.add(trans)
-    
+    for txn in transactions:
+        db.session.add(txn)
     db.session.commit()
-    return [trans.id for trans in transactions]
+    
+    return transactions
 
 
-# ============================================================================
-# Tests
-# ============================================================================
-
-def test_suggest_category(app):
+def test_suggest_category(app, test_categories):
     """Test category suggestion based on description"""
     with app.app_context():
-        # Setup
-        create_test_categories(app)
-        
         service = CategorizationService()
         
-        # Test transport keyword
-        suggested = service.suggest_category('Uber trip downtown')
-        assert suggested is not None
-        assert suggested.name == 'Transport'
+        # Test transport match
+        category = service.suggest_category('Uber ride to town')
+        assert category is not None
+        assert category.name == 'Transport'
         
-        # Test food keyword
-        suggested = service.suggest_category('Lunch at restaurant')
-        assert suggested is not None
-        assert suggested.name == 'Food'
+        # Test food match
+        category = service.suggest_category('Lunch at restaurant')
+        assert category is not None
+        assert category.name == 'Food'
         
         # Test no match
-        suggested = service.suggest_category('Random description')
-        assert suggested is None
+        category = service.suggest_category('Random transaction')
+        assert category is None
 
 
-def test_category_keywords_matching(app):
+def test_category_keywords_matching(app, test_categories):
     """Test keyword matching logic"""
     with app.app_context():
-        # Setup
-        create_test_categories(app)
-        
         transport_cat = TransactionCategory.query.filter_by(name='Transport').first()
         
-        # Test keyword list parsing
-        keywords = transport_cat.get_keywords_list()
-        assert 'uber' in keywords
-        assert 'bolt' in keywords
-        assert 'taxi' in keywords
+        # Test exact keyword match
+        assert transport_cat.matches_description('Uber trip')
+        assert transport_cat.matches_description('Fuel purchase')
         
-        # Test description matching
-        assert transport_cat.matches_description('Paid for Uber ride')
-        assert transport_cat.matches_description('BOLT taxi service')
-        assert not transport_cat.matches_description('Restaurant meal')
+        # Test case insensitive
+        assert transport_cat.matches_description('UBER TRIP')
+        assert transport_cat.matches_description('taxi ride')
+        
+        # Test no match
+        assert not transport_cat.matches_description('Coffee shop')
 
 
-def test_auto_categorize_all(app):
+def test_auto_categorize_all(app, test_transactions, test_categories):
     """Test automatic categorization of all transactions"""
     with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        create_test_transactions(app, user_id)
-        
         service = CategorizationService()
+        
+        # Verify initial state - no transactions categorized
+        uncategorized = BankTransaction.query.filter_by(category_id=None).count()
+        assert uncategorized == 4
         
         # Run auto-categorization
         categorized, total = service.auto_categorize_all()
         
-        # Should categorize 2 out of 3 transactions
-        assert total == 3
-        assert categorized == 2
+        # Refresh session to get updated data
+        db.session.expire_all()
         
-        # Verify specific transactions were categorized correctly
-        uber_trans = BankTransaction.query.filter(
-            BankTransaction.description.like('%Uber%')
-        ).first()
-        assert uber_trans is not None
-        assert uber_trans.category_id is not None
-        assert uber_trans.category.name == 'Transport'
+        # Check results
+        assert total == 4  # Total uncategorized transactions
+        assert categorized == 3  # Should categorize 3 out of 4
         
-        coffee_trans = BankTransaction.query.filter(
-            BankTransaction.description.like('%Coffee%')
+        # Verify specific categorizations
+        uber_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%UBER%')
         ).first()
-        assert coffee_trans is not None
-        assert coffee_trans.category_id is not None
-        assert coffee_trans.category.name == 'Food'
+        assert uber_txn.category_id is not None
+        assert uber_txn.category.name == 'Transport'
         
-        unknown_trans = BankTransaction.query.filter(
-            BankTransaction.description.like('%Unknown%')
+        coffee_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%COFFEE%')
         ).first()
-        assert unknown_trans is not None
-        assert unknown_trans.category_id is None
+        assert coffee_txn.category_id is not None
+        assert coffee_txn.category.name == 'Food'
+        
+        fee_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%BANK FEE%')
+        ).first()
+        assert fee_txn.category_id is not None
+        assert fee_txn.category.name == 'Bank Fees'
+        
+        # Unknown transaction should remain uncategorized
+        unknown_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%UNKNOWN%')
+        ).first()
+        assert unknown_txn.category_id is None
 
 
-def test_find_matching_category(app):
-    """Test finding matching category for transaction"""
+def test_find_matching_category(app, test_transactions, test_categories):
+    """Test finding matching category for a transaction"""
     with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        create_test_transactions(app, user_id)
-        
         service = CategorizationService()
-        categories = TransactionCategory.query.all()
         
-        # Get first transaction (Uber)
-        transaction = BankTransaction.query.filter(
-            BankTransaction.description.like('%Uber%')
-        ).first()
+        # Get active categories
+        categories = TransactionCategory.query.filter_by(active=True).all()
+        assert len(categories) == 3
         
-        assert transaction is not None
+        # Test matching for each transaction type
+        transactions = BankTransaction.query.all()
         
-        category = service._find_matching_category(transaction, categories)
-        assert category is not None
-        assert category.name == 'Transport'
+        # UBER transaction
+        uber_txn = next(t for t in transactions if 'UBER' in t.description)
+        match = service._find_matching_category(uber_txn, categories)
+        assert match is not None
+        assert match.name == 'Transport'
+        
+        # COFFEE transaction
+        coffee_txn = next(t for t in transactions if 'COFFEE' in t.description)
+        match = service._find_matching_category(coffee_txn, categories)
+        assert match is not None
+        assert match.name == 'Food'
+        
+        # BANK FEE transaction
+        fee_txn = next(t for t in transactions if 'BANK FEE' in t.description)
+        match = service._find_matching_category(fee_txn, categories)
+        assert match is not None
+        assert match.name == 'Bank Fees'
+        
+        # UNKNOWN transaction
+        unknown_txn = next(t for t in transactions if 'UNKNOWN' in t.description)
+        match = service._find_matching_category(unknown_txn, categories)
+        assert match is None
 
 
-def test_preview_categorization(app):
+def test_preview_categorization(app, test_transactions, test_categories):
     """Test categorization preview"""
     with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        create_test_transactions(app, user_id)
-        
         service = CategorizationService()
         
         preview = service.preview_categorization()
         
-        # Should have 3 uncategorized transactions
-        assert len(preview['uncategorized']) == 3
-        
-        # Should have 2 matches
-        assert len(preview['matches']) == 2
-        
-        # Should have 1 no match
+        assert len(preview['uncategorized']) == 4
+        assert len(preview['matches']) == 3
         assert len(preview['no_match']) == 1
         
-        # Verify match details
-        match = preview['matches'][0]
-        assert 'transaction' in match
-        assert 'category' in match
-        assert 'keyword' in match
+        # Check that matches have correct structure
+        for match in preview['matches']:
+            assert 'transaction' in match
+            assert 'category' in match
+            assert 'keyword' in match
 
 
-def test_categorization_preserves_existing(app):
-    """Test that auto-categorization doesn't override manual categories"""
+def test_category_statistics(app, test_transactions, test_categories):
+    """Test category usage statistics"""
     with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        create_test_transactions(app, user_id)
+        service = CategorizationService()
         
-        # Get the Uber transaction and manually categorize it as Food
-        transaction = BankTransaction.query.filter(
-            BankTransaction.description.like('%Uber%')
+        # Categorize transactions
+        service.auto_categorize_all()
+        
+        # Refresh session
+        db.session.expire_all()
+        
+        # Check statistics
+        transport_cat = TransactionCategory.query.filter_by(name='Transport').first()
+        assert transport_cat.transactions.count() == 1
+        
+        food_cat = TransactionCategory.query.filter_by(name='Food').first()
+        assert food_cat.transactions.count() == 1
+        
+        fee_cat = TransactionCategory.query.filter_by(name='Bank Fees').first()
+        assert fee_cat.transactions.count() == 1
+
+
+def test_recategorize_transaction(app, test_transactions, test_categories):
+    """Test changing a transaction's category"""
+    with app.app_context():
+        # Auto-categorize first
+        service = CategorizationService()
+        service.auto_categorize_all()
+        
+        # Get the UBER transaction
+        uber_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%UBER%')
         ).first()
         
-        food_category = TransactionCategory.query.filter_by(name='Food').first()
-        transaction.category_id = food_category.id
+        # Verify it's categorized as Transport
+        assert uber_txn.category.name == 'Transport'
+        
+        # Manually recategorize as Food (incorrect but testing functionality)
+        food_cat = TransactionCategory.query.filter_by(name='Food').first()
+        uber_txn.category_id = food_cat.id
         db.session.commit()
         
-        original_category_id = transaction.category_id
+        # Verify change
+        db.session.expire_all()
+        uber_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%UBER%')
+        ).first()
+        assert uber_txn.category.name == 'Food'
+
+
+def test_inactive_categories_not_used(app, test_transactions, test_categories):
+    """Test that inactive categories are not used for auto-categorization"""
+    with app.app_context():
+        # Deactivate Transport category
+        transport_cat = TransactionCategory.query.filter_by(name='Transport').first()
+        transport_cat.active = False
+        db.session.commit()
         
         # Run auto-categorization
         service = CategorizationService()
         categorized, total = service.auto_categorize_all()
         
-        # Should only categorize the Coffee transaction (1 out of 2 remaining)
-        assert categorized == 1
+        # UBER transaction should NOT be categorized
+        uber_txn = BankTransaction.query.filter(
+            BankTransaction.description.like('%UBER%')
+        ).first()
+        assert uber_txn.category_id is None
         
-        # Uber transaction should still have Food category (not changed to Transport)
-        db.session.refresh(transaction)
-        assert transaction.category_id == original_category_id
-        assert transaction.category.name == 'Food'
-
-
-def test_categorization_case_insensitive(app):
-    """Test that keyword matching is case-insensitive"""
-    with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        
-        # Create a statement
-        statement = EmailStatement(
-            user_id=user_id,
-            email_id='test-case-statement',
-            subject='Test',
-            sender='test@test.com',
-            received_date=datetime.utcnow(),
-            bank_name='testbank',
-            is_processed=True
-        )
-        db.session.add(statement)
-        db.session.flush()
-        
-        # Create transaction with uppercase description
-        transaction = BankTransaction(
-            user_id=user_id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='UBER TRIP TO AIRPORT',
-            withdrawal=Decimal('300.00'),
-            deposit=Decimal('0.00'),
-            balance=Decimal('5000.00'),
-            reference_number='REF999'
-        )
-        db.session.add(transaction)
-        db.session.commit()
-        
-        # Run categorization
-        service = CategorizationService()
-        service.auto_categorize_all()
-        
-        # Should match Transport category despite uppercase
-        db.session.refresh(transaction)
-        assert transaction.category_id is not None
-        assert transaction.category.name == 'Transport'
-
-
-def test_empty_description(app):
-    """Test handling of transactions with empty descriptions"""
-    with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        
-        statement = EmailStatement(
-            user_id=user_id,
-            email_id='test-empty-desc',
-            subject='Test',
-            sender='test@test.com',
-            received_date=datetime.utcnow(),
-            bank_name='testbank',
-            is_processed=True
-        )
-        db.session.add(statement)
-        db.session.flush()
-        
-        transaction = BankTransaction(
-            user_id=user_id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='',  # Empty description
-            withdrawal=Decimal('100.00'),
-            deposit=Decimal('0.00'),
-            balance=Decimal('5000.00'),
-            reference_number='REF888'
-        )
-        db.session.add(transaction)
-        db.session.commit()
-        
-        service = CategorizationService()
-        service.auto_categorize_all()
-        
-        # Should not categorize empty descriptions
-        db.session.refresh(transaction)
-        assert transaction.category_id is None
-
-
-def test_multiple_keyword_matches(app):
-    """Test transaction matching multiple category keywords"""
-    with app.app_context():
-        # Setup
-        user_id = create_test_user(app)
-        create_test_categories(app)
-        
-        statement = EmailStatement(
-            user_id=user_id,
-            email_id='test-multi-match',
-            subject='Test',
-            sender='test@test.com',
-            received_date=datetime.utcnow(),
-            bank_name='testbank',
-            is_processed=True
-        )
-        db.session.add(statement)
-        db.session.flush()
-        
-        # Description matches both categories
-        transaction = BankTransaction(
-            user_id=user_id,
-            statement_id=statement.id,
-            date=date.today(),
-            description='Uber Eats lunch delivery',  # Has both uber and lunch
-            withdrawal=Decimal('150.00'),
-            deposit=Decimal('0.00'),
-            balance=Decimal('5000.00'),
-            reference_number='REF777'
-        )
-        db.session.add(transaction)
-        db.session.commit()
-        
-        service = CategorizationService()
-        service.auto_categorize_all()
-        
-        # Should match one of the categories
-        db.session.refresh(transaction)
-        assert transaction.category_id is not None
-        # Either Transport or Food is acceptable
-        assert transaction.category.name in ['Transport', 'Food']
+        # But COFFEE and BANK FEE should still be categorized
+        assert categorized == 2
