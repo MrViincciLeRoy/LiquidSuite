@@ -1,158 +1,251 @@
 # ============================================================================
-# FILE 5: LiquidSuite/lsuite/gmail/routes.py - CSV UPLOAD FIX
+# LiquidSuite/lsuite/erpnext/routes.py - CORRECTED VERSION
 # ============================================================================
 """
-Gmail Routes - Including CSV Upload
-FIXED: Proper field mapping for BankTransaction
+ERPNext Routes - Configuration and Sync Management
 """
-from flask import render_template, redirect, url_for, flash, request, current_app, make_response
+from flask import render_template, redirect, url_for, flash, request, jsonify
 from flask_login import login_required, current_user
-from werkzeug.utils import secure_filename
-from datetime import datetime
-import logging
 from lsuite.extensions import db
-from lsuite.models import BankTransaction, EmailStatement
-from lsuite.gmail.csv_parser import CSVParser
-from lsuite.gmail import gmail_bp
-
-logger = logging.getLogger(__name__)
+from lsuite.models import ERPNextConfig, ERPNextSyncLog, BankTransaction
+from lsuite.erpnext.services import ERPNextService
+from lsuite.erpnext import erpnext_bp
 
 
-@gmail_bp.route('/upload-csv', methods=['GET', 'POST'])
+@erpnext_bp.route('/configs')
 @login_required
-def upload_csv():
-    """Upload and import CSV transactions"""
+def configs():
+    """List ERPNext configurations"""
+    configs = ERPNextConfig.query.filter_by(user_id=current_user.id).all()
+    return render_template('erpnext/configs.html', configs=configs)
+
+
+@erpnext_bp.route('/configs/new', methods=['GET', 'POST'])
+@login_required
+def new_config():
+    """Create new ERPNext configuration"""
     if request.method == 'POST':
-        # Check if file was uploaded
-        if 'csv_file' not in request.files:
-            flash('No file selected', 'warning')
-            return redirect(request.url)
+        config = ERPNextConfig(
+            user_id=current_user.id,
+            name=request.form['name'],
+            base_url=request.form['base_url'],
+            api_key=request.form['api_key'],
+            api_secret=request.form['api_secret'],
+            default_company=request.form.get('default_company', ''),
+            bank_account=request.form.get('bank_account', ''),
+            default_cost_center=request.form.get('default_cost_center', ''),
+            is_active=request.form.get('is_active', 'false') == 'true'
+        )
         
-        file = request.files['csv_file']
+        # Test connection
+        service = ERPNextService(config)
+        success, message = service.test_connection()
         
-        if file.filename == '':
-            flash('No file selected', 'warning')
-            return redirect(request.url)
+        if not success:
+            flash(f'Connection test failed: {message}', 'danger')
+            return render_template('erpnext/config_form.html', config=config)
         
-        if not file.filename.endswith('.csv'):
-            flash('Please upload a CSV file', 'warning')
-            return redirect(request.url)
+        db.session.add(config)
+        db.session.commit()
         
-        try:
-            # Read CSV data
-            csv_data = file.read()
-            
-            # Get optional parameters
-            bank_account = request.form.get('bank_account', '').strip()
-            create_statement = request.form.get('create_statement') == 'on'
-            
-            # Parse CSV
-            parser = CSVParser()
-            transactions = parser.parse_csv(csv_data)
-            
-            if not transactions:
-                flash('No valid transactions found in CSV file', 'warning')
-                return redirect(request.url)
-            
-            # Create statement if requested
-            statement_id = None
-            if create_statement:
-                statement = EmailStatement(
-                    user_id=current_user.id,
-                    email_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
-                    subject=f"CSV Import: {secure_filename(file.filename)}",
-                    sender='CSV Upload',
-                    received_date=datetime.utcnow(),
-                    bank_name='capitec',
-                    is_processed=True,
-                    has_attachments=False
-                )
-                db.session.add(statement)
-                db.session.flush()
-                statement_id = statement.id
-            
-            # Import transactions
-            imported_count = 0
-            skipped_count = 0
-            
-            for trans_data in transactions:
-                # Check for duplicates (same date, description, and amount)
-                existing = BankTransaction.query.filter_by(
-                    user_id=current_user.id,
-                    date=trans_data['transaction_date'],
-                    description=trans_data['description'],
-                ).filter(
-                    (BankTransaction.withdrawal == trans_data['debits']) |
-                    (BankTransaction.deposit == trans_data['credits'])
-                ).first()
-                
-                if existing:
-                    skipped_count += 1
-                    continue
-                
-                # ✅ FIXED: Proper field mapping
-                transaction = BankTransaction(
-                    user_id=current_user.id,
-                    statement_id=statement_id,
-                    date=trans_data['transaction_date'],           # ✅ date (not transaction_date)
-                    posting_date=trans_data['posting_date'],
-                    description=trans_data['description'],
-                    withdrawal=trans_data['debits'],               # ✅ debits → withdrawal
-                    deposit=trans_data['credits'],                 # ✅ credits → deposit
-                    balance=trans_data['balance'],
-                    reference_number=trans_data['reference']       # ✅ reference → reference_number
-                )
-                db.session.add(transaction)
-                imported_count += 1
-            
-            db.session.commit()
-            
-            flash(f'✅ Successfully imported {imported_count} transactions ({skipped_count} duplicates skipped)', 'success')
-            return redirect(url_for('gmail.transactions'))
-            
-        except Exception as e:
-            db.session.rollback()
-            flash(f'❌ Error importing CSV: {str(e)}', 'danger')
-            logger.error(f"CSV import error: {str(e)}")
-            return redirect(request.url)
+        flash(f'Configuration created successfully! {message}', 'success')
+        return redirect(url_for('erpnext.configs'))
     
-    return render_template('gmail/upload_csv.html')
+    return render_template('erpnext/config_form.html')
 
 
-@gmail_bp.route('/download-csv-template')
+@erpnext_bp.route('/configs/<int:id>/edit', methods=['GET', 'POST'])
 @login_required
-def download_csv_template():
-    """Download CSV template"""
-    template = """Transaction Date,Posting Date,Description,Debits,Credits,Balance,Bank account
-2025/09/23,2025/09/23,Sample Transaction,,1000.00,5000.00,5443 - Capitec Savings Account
-2025/09/24,2025/09/24,Sample Payment,500.00,,4500.00,5443 - Capitec Savings Account"""
+def edit_config(id):
+    """Edit ERPNext configuration"""
+    config = ERPNextConfig.query.get_or_404(id)
     
-    response = make_response(template)
-    response.headers['Content-Type'] = 'text/csv'
-    response.headers['Content-Disposition'] = 'attachment; filename=transaction_template.csv'
+    if config.user_id != current_user.id:
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('erpnext.configs'))
     
-    return response
+    if request.method == 'POST':
+        config.name = request.form['name']
+        config.base_url = request.form['base_url']
+        config.api_key = request.form['api_key']
+        config.api_secret = request.form['api_secret']
+        config.default_company = request.form.get('default_company', '')
+        config.bank_account = request.form.get('bank_account', '')
+        config.default_cost_center = request.form.get('default_cost_center', '')
+        config.is_active = request.form.get('is_active', 'false') == 'true'
+        
+        # Test connection
+        service = ERPNextService(config)
+        success, message = service.test_connection()
+        
+        if not success:
+            flash(f'Connection test failed: {message}', 'warning')
+        
+        db.session.commit()
+        
+        flash('Configuration updated successfully!', 'success')
+        return redirect(url_for('erpnext.configs'))
+    
+    return render_template('erpnext/config_form.html', config=config)
 
 
-@gmail_bp.route('/transactions')
+@erpnext_bp.route('/configs/<int:id>/test', methods=['POST'])
 @login_required
-def transactions():
-    """List all transactions"""
+def test_config(id):
+    """Test ERPNext connection"""
+    config = ERPNextConfig.query.get_or_404(id)
+    
+    if config.user_id != current_user.id:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+    
+    service = ERPNextService(config)
+    success, message = service.test_connection()
+    
+    return jsonify({'success': success, 'message': message})
+
+
+@erpnext_bp.route('/configs/<int:id>/delete', methods=['POST'])
+@login_required
+def delete_config(id):
+    """Delete ERPNext configuration"""
+    config = ERPNextConfig.query.get_or_404(id)
+    
+    if config.user_id != current_user.id:
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('erpnext.configs'))
+    
+    db.session.delete(config)
+    db.session.commit()
+    
+    flash('Configuration deleted successfully!', 'success')
+    return redirect(url_for('erpnext.configs'))
+
+
+@erpnext_bp.route('/configs/<int:id>/activate', methods=['POST'])
+@login_required
+def activate_config(id):
+    """Set configuration as active"""
+    config = ERPNextConfig.query.get_or_404(id)
+    
+    if config.user_id != current_user.id:
+        flash('Unauthorized', 'danger')
+        return redirect(url_for('erpnext.configs'))
+    
+    # Deactivate all other configs
+    ERPNextConfig.query.filter_by(user_id=current_user.id).update({'is_active': False})
+    
+    # Activate this config
+    config.is_active = True
+    db.session.commit()
+    
+    flash(f'"{config.name}" is now the active configuration', 'success')
+    return redirect(url_for('erpnext.configs'))
+
+
+@erpnext_bp.route('/sync-logs')
+@login_required
+def sync_logs():
+    """View sync logs"""
     page = request.args.get('page', 1, type=int)
-    per_page = current_app.config.get('ITEMS_PER_PAGE', 20)
+    per_page = 50
     
-    query = BankTransaction.query.filter_by(user_id=current_user.id)
+    logs = ERPNextSyncLog.query.join(ERPNextConfig).filter(
+        ERPNextConfig.user_id == current_user.id
+    ).order_by(
+        ERPNextSyncLog.sync_date.desc()
+    ).paginate(page=page, per_page=per_page, error_out=False)
     
-    # Apply filters
-    if request.args.get('uncategorized'):
-        query = query.filter_by(category_id=None)
+    return render_template('erpnext/sync_logs.html', logs=logs)
+
+
+@erpnext_bp.route('/transactions/<int:id>/sync', methods=['POST'])
+@login_required
+def sync_transaction(id):
+    """Sync single transaction to ERPNext"""
+    transaction = BankTransaction.query.get_or_404(id)
     
-    if request.args.get('not_synced'):
-        query = query.filter_by(erpnext_synced=False)
+    if transaction.user_id != current_user.id:
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
     
-    # Order and paginate
-    transactions = query.order_by(BankTransaction.date.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
+    if not transaction.category_id:
+        return jsonify({'success': False, 'message': 'Transaction must be categorized first'}), 400
     
-    return render_template('gmail/transactions.html', transactions=transactions)
+    config = ERPNextConfig.query.filter_by(
+        user_id=current_user.id,
+        is_active=True
+    ).first()
+    
+    if not config:
+        return jsonify({'success': False, 'message': 'No active ERPNext configuration'}), 400
+    
+    try:
+        service = ERPNextService(config)
+        journal_entry_name = service.create_journal_entry(transaction)
+        
+        return jsonify({
+            'success': True,
+            'message': f'Synced successfully: {journal_entry_name}',
+            'journal_entry': journal_entry_name
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@erpnext_bp.route('/fetch-accounts')
+@login_required
+def fetch_accounts():
+    """Fetch chart of accounts from ERPNext"""
+    config = ERPNextConfig.query.filter_by(
+        user_id=current_user.id,
+        is_active=True
+    ).first()
+    
+    if not config:
+        return jsonify({'success': False, 'message': 'No active ERPNext configuration'}), 400
+    
+    try:
+        service = ERPNextService(config)
+        accounts = service.get_chart_of_accounts()
+        
+        return jsonify({
+            'success': True,
+            'accounts': accounts
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+@erpnext_bp.route('/fetch-cost-centers')
+@login_required
+def fetch_cost_centers():
+    """Fetch cost centers from ERPNext"""
+    config = ERPNextConfig.query.filter_by(
+        user_id=current_user.id,
+        is_active=True
+    ).first()
+    
+    if not config:
+        return jsonify({'success': False, 'message': 'No active ERPNext configuration'}), 400
+    
+    try:
+        service = ERPNextService(config)
+        cost_centers = service.get_cost_centers()
+        
+        return jsonify({
+            'success': True,
+            'cost_centers': cost_centers
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
