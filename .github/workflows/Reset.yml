@@ -1,32 +1,37 @@
 # ============================================================================
-# drop-database.yml - Drop All Database Tables (DESTRUCTIVE)
+# reset-database.yml - Complete Database Reset (DESTRUCTIVE)
 # ============================================================================
-# WARNING: This workflow will DELETE ALL DATA from the database
-# Use with extreme caution - this action cannot be undone!
+# Drops all tables, recreates them, and seeds default data
+# WARNING: This will DELETE ALL DATA - use with extreme caution!
 # ============================================================================
 
-name: Drop Database Tables
+name: Reset Database (Drop + Init)
 
 on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: 'Type "DELETE ALL DATA" to confirm'
+        description: 'Type "RESET DATABASE" to confirm'
         required: true
         type: string
       environment:
         description: 'Target environment'
         required: true
-        default: 'production'
+        default: 'development'
         type: choice
         options:
-          - production
-          - staging
           - development
+          - staging
+          - production
+      seed_data:
+        description: 'Seed default categories after reset?'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
-  drop-tables:
-    name: Drop All Database Tables
+  reset-database:
+    name: Reset Database
     runs-on: ubuntu-latest
     
     # Add environment protection
@@ -35,12 +40,28 @@ jobs:
     steps:
       - name: Validate Confirmation
         run: |
-          if [ "${{ github.event.inputs.confirmation }}" != "DELETE ALL DATA" ]; then
+          if [ "${{ github.event.inputs.confirmation }}" != "RESET DATABASE" ]; then
             echo "❌ ERROR: Confirmation text does not match!"
-            echo "You must type 'DELETE ALL DATA' exactly to proceed."
+            echo "You must type 'RESET DATABASE' exactly to proceed."
             exit 1
           fi
           echo "✅ Confirmation validated"
+      
+      - name: Security Check - Prevent Production Reset
+        if: github.event.inputs.environment == 'production'
+        run: |
+          echo "⚠️  =========================================="
+          echo "⚠️  CRITICAL WARNING"
+          echo "⚠️  =========================================="
+          echo ""
+          echo "You are about to RESET the PRODUCTION database!"
+          echo "This will DELETE ALL PRODUCTION DATA!"
+          echo ""
+          echo "Are you absolutely sure this is intended?"
+          echo "Consider using 'development' or 'staging' instead."
+          echo ""
+          echo "Proceeding in 10 seconds..."
+          sleep 10
       
       - name: Checkout code
         uses: actions/checkout@v4
@@ -49,6 +70,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip'
       
       - name: Install dependencies
         working-directory: LiquidSuite
@@ -56,19 +78,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Show Warning
-        run: |
-          echo "⚠️  =========================================="
-          echo "⚠️  WARNING: DESTRUCTIVE OPERATION"
-          echo "⚠️  =========================================="
-          echo ""
-          echo "This will DELETE ALL DATA from the database!"
-          echo "Environment: ${{ github.event.inputs.environment }}"
-          echo ""
-          echo "Proceeding in 5 seconds..."
-          sleep 5
-      
-      - name: Drop All Tables
+      - name: Pre-Reset Database Check
         working-directory: LiquidSuite
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -76,36 +86,113 @@ jobs:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
-          echo "🗑️  Dropping all database tables..."
+          echo "📊 Current Database Status"
+          echo "=========================="
           echo ""
-          python scripts/init_db.py drop << 'CONFIRM'
+          python scripts/init_db.py check || echo "⚠️  Database may be empty or uninitialized"
+          echo ""
+      
+      - name: Execute Database Reset
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🔄 Step 1: Dropping all tables with CASCADE..."
+          echo "=============================================="
+          echo ""
+          python scripts/drop_db_cascade.py cascade << 'CONFIRM'
           DELETE ALL DATA
           CONFIRM
           echo ""
-          echo "✅ Database tables dropped successfully!"
+          
+          echo "📊 Step 2: Creating fresh tables..."
+          echo "===================================="
+          echo ""
+          python scripts/init_db.py init
+          echo ""
+          echo "✅ Database reset complete!"
       
-      - name: Summary
+      - name: Seed Default Categories
+        if: github.event.inputs.seed_data == 'true'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🌱 Seeding default categories..."
+          echo "================================="
+          echo ""
+          python scripts/seed_categories.py seed
+          echo ""
+      
+      - name: Verify Reset
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🔍 Verifying database reset..."
+          echo "=============================="
+          echo ""
+          python scripts/init_db.py check
+          echo ""
+      
+      - name: Final Summary
         if: success()
         run: |
           echo ""
-          echo "📊 Operation Summary"
-          echo "===================="
-          echo "Status: ✅ SUCCESS"
-          echo "Action: All tables dropped"
+          echo "════════════════════════════════════════"
+          echo "✅ DATABASE RESET COMPLETE"
+          echo "════════════════════════════════════════"
+          echo ""
           echo "Environment: ${{ github.event.inputs.environment }}"
           echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
           echo ""
-          echo "⚠️  The database is now empty!"
-          echo "Next steps:"
-          echo "  1. Run 'Initialize Database' workflow to recreate tables"
-          echo "  2. Run 'Seed Categories' workflow to add default data"
+          echo "Completed steps:"
+          echo "  ✅ Dropped all existing tables"
+          echo "  ✅ Created fresh database schema"
+          
+          if [ "${{ github.event.inputs.seed_data }}" = "true" ]; then
+            echo "  ✅ Seeded default categories"
+          else
+            echo "  ⏭️  Skipped category seeding"
+          fi
+          
+          echo "  ✅ Verified database structure"
+          echo ""
+          echo "Database is now ready to use!"
+          echo ""
+          
+          if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+            echo "⚠️  PRODUCTION database has been reset!"
+            echo "All previous data has been permanently deleted."
+          fi
       
       - name: Notify on Failure
         if: failure()
         run: |
           echo ""
-          echo "❌ Operation Failed"
-          echo "===================="
-          echo "The drop operation encountered an error."
-          echo "Please check the logs above for details."
-          echo "Database state may be inconsistent."
+          echo "❌ DATABASE RESET FAILED"
+          echo "========================"
+          echo ""
+          echo "The reset operation encountered an error."
+          echo "Database state may be inconsistent!"
+          echo ""
+          echo "Recommended actions:"
+          echo "  1. Review the error logs above"
+          echo "  2. Check database connectivity"
+          echo "  3. Verify database credentials"
+          echo "  4. Consider manual intervention"
+          echo ""
+          
+          if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+            echo "⚠️  CRITICAL: Production database may be in inconsistent state!"
+            echo "Please investigate immediately."
+          fi
