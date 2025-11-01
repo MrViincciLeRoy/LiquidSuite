@@ -11,22 +11,11 @@ class Config:
     # Flask
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     
-    # Database - Fix postgres:// to postgresql:// for SQLAlchemy 2.0+
-    database_url = os.environ.get('DATABASE_URL') or os.environ.get('SQLALCHEMY_DATABASE_URI')
-    if database_url and database_url.startswith('postgres://'):
-        database_url = database_url.replace('postgres://', 'postgresql://', 1)
-    
-    SQLALCHEMY_DATABASE_URI = database_url or 'postgresql://localhost/lsuite'
+    # Database
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
+        'postgresql://localhost/lsuite'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
-    
-    # Database connection pool settings
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-        'pool_recycle': 300,
-        'pool_size': 10,
-        'max_overflow': 20
-    }
     
     # Session
     SESSION_COOKIE_SECURE = True
@@ -79,22 +68,39 @@ class ProductionConfig(Config):
     SESSION_COOKIE_SAMESITE = 'Strict'
 
 
-class TestingConfig(Config):
-    """Testing configuration"""
+
+# ============================================================================
+# FILE 8: LiquidSuite/config.py - ADD TestConfig
+# ============================================================================
+"""
+Add this to your existing config.py
+"""
+
+class TestConfig(Config):
+    """Test configuration"""
     TESTING = True
+    WTF_CSRF_ENABLED = False  # Disable CSRF for tests
+    SQLALCHEMY_DATABASE_URI = os.getenv(
+        'TEST_DATABASE_URL',
+        'postgresql://test_user:test_password@localhost:5432/lsuite_test'
+    )
+    SQLALCHEMY_ECHO = False  # Set to True for SQL debugging
     
-    # Fix test database URL too
-    test_db_url = os.environ.get('TEST_DATABASE_URL') or 'postgresql://localhost/lsuite_test'
-    if test_db_url.startswith('postgres://'):
-        test_db_url = test_db_url.replace('postgres://', 'postgresql://', 1)
+    # Test-specific settings
+    ITEMS_PER_PAGE = 10
+    SECRET_KEY = 'test-secret-key-for-testing-only'
     
-    SQLALCHEMY_DATABASE_URI = test_db_url
-    WTF_CSRF_ENABLED = False
+    # Disable external services in tests
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
 
 
+# Update config dictionary
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
-    'testing': TestingConfig,
+    'testing': TestConfig,  # ? ADD THIS
     'default': DevelopmentConfig
 }
+
+
