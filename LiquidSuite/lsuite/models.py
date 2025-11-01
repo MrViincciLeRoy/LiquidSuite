@@ -163,6 +163,25 @@ class Transaction(db.Model):
     def __repr__(self):
         return f'<Transaction {self.reference_number or self.id}>'
 
+class GoogleCredential(db.Model):
+    """Google OAuth credentials storage"""
+    __tablename__ = 'google_credentials'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    client_id = db.Column(db.String(255), nullable=False)
+    client_secret = db.Column(db.String(255), nullable=False)
+    access_token = db.Column(db.Text)
+    refresh_token = db.Column(db.Text)
+    token_expiry = db.Column(db.DateTime)
+    is_authenticated = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<GoogleCredential {self.name}>'
+
 
 class BankTransaction(db.Model):
     """Bank transaction model for ERPNext integration"""
