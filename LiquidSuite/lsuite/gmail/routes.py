@@ -1,15 +1,21 @@
+# ============================================================================
+# FILE 5: LiquidSuite/lsuite/gmail/routes.py - CSV UPLOAD FIX
+# ============================================================================
 """
-CSV Upload Routes
-Add these routes to lsuite/gmail/routes.py
+Gmail Routes - Including CSV Upload
+FIXED: Proper field mapping for BankTransaction
 """
-from flask import render_template, redirect, url_for, flash, request, current_app
+from flask import render_template, redirect, url_for, flash, request, current_app, make_response
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
-import os
+from datetime import datetime
+import logging
 from lsuite.extensions import db
 from lsuite.models import BankTransaction, EmailStatement
 from lsuite.gmail.csv_parser import CSVParser
 from lsuite.gmail import gmail_bp
+
+logger = logging.getLogger(__name__)
 
 
 @gmail_bp.route('/upload-csv', methods=['GET', 'POST'])
@@ -52,13 +58,14 @@ def upload_csv():
             statement_id = None
             if create_statement:
                 statement = EmailStatement(
-                    gmail_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    user_id=current_user.id,
+                    email_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     subject=f"CSV Import: {secure_filename(file.filename)}",
                     sender='CSV Upload',
-                    date=datetime.utcnow(),
+                    received_date=datetime.utcnow(),
                     bank_name='capitec',
-                    state='parsed',
-                    has_pdf=False
+                    is_processed=True,
+                    has_attachments=False
                 )
                 db.session.add(statement)
                 db.session.flush()
@@ -71,28 +78,29 @@ def upload_csv():
             for trans_data in transactions:
                 # Check for duplicates (same date, description, and amount)
                 existing = BankTransaction.query.filter_by(
-                    transaction_date=trans_data['transaction_date'],
+                    user_id=current_user.id,
+                    date=trans_data['transaction_date'],
                     description=trans_data['description'],
                 ).filter(
-                    (BankTransaction.debits == trans_data['debits']) |
-                    (BankTransaction.credits == trans_data['credits'])
+                    (BankTransaction.withdrawal == trans_data['debits']) |
+                    (BankTransaction.deposit == trans_data['credits'])
                 ).first()
                 
                 if existing:
                     skipped_count += 1
                     continue
                 
-                # Create transaction
+                # ? FIXED: Proper field mapping
                 transaction = BankTransaction(
+                    user_id=current_user.id,
                     statement_id=statement_id,
-                    transaction_date=trans_data['transaction_date'],
+                    date=trans_data['transaction_date'],           # ? date (not transaction_date)
                     posting_date=trans_data['posting_date'],
                     description=trans_data['description'],
-                    debits=trans_data['debits'],
-                    credits=trans_data['credits'],
+                    withdrawal=trans_data['debits'],               # ? debits ? withdrawal
+                    deposit=trans_data['credits'],                 # ? credits ? deposit
                     balance=trans_data['balance'],
-                    bank_account=trans_data['bank_account'] or bank_account,
-                    reference=trans_data['reference']
+                    reference_number=trans_data['reference']       # ? reference ? reference_number
                 )
                 db.session.add(transaction)
                 imported_count += 1
@@ -115,8 +123,6 @@ def upload_csv():
 @login_required
 def download_csv_template():
     """Download CSV template"""
-    from flask import make_response
-    
     template = """Transaction Date,Posting Date,Description,Debits,Credits,Balance,Bank account
 2025/09/23,2025/09/23,Sample Transaction,,1000.00,5000.00,5443 - Capitec Savings Account
 2025/09/24,2025/09/24,Sample Payment,500.00,,4500.00,5443 - Capitec Savings Account"""
@@ -128,86 +134,25 @@ def download_csv_template():
     return response
 
 
-@gmail_bp.route('/bulk-csv-import', methods=['GET', 'POST'])
+@gmail_bp.route('/transactions')
 @login_required
-def bulk_csv_import():
-    """Bulk import multiple CSV files"""
-    if request.method == 'POST':
-        files = request.files.getlist('csv_files')
-        
-        if not files:
-            flash('No files selected', 'warning')
-            return redirect(request.url)
-        
-        total_imported = 0
-        total_skipped = 0
-        files_processed = 0
-        
-        parser = CSVParser()
-        
-        for file in files:
-            if not file.filename.endswith('.csv'):
-                continue
-            
-            try:
-                csv_data = file.read()
-                transactions = parser.parse_csv(csv_data)
-                
-                # Create statement for this file
-                statement = EmailStatement(
-                    gmail_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{files_processed}",
-                    subject=f"CSV Import: {secure_filename(file.filename)}",
-                    sender='Bulk CSV Upload',
-                    date=datetime.utcnow(),
-                    bank_name='capitec',
-                    state='parsed',
-                    has_pdf=False
-                )
-                db.session.add(statement)
-                db.session.flush()
-                
-                imported = 0
-                skipped = 0
-                
-                for trans_data in transactions:
-                    # Check for duplicates
-                    existing = BankTransaction.query.filter_by(
-                        transaction_date=trans_data['transaction_date'],
-                        description=trans_data['description'],
-                    ).filter(
-                        (BankTransaction.debits == trans_data['debits']) |
-                        (BankTransaction.credits == trans_data['credits'])
-                    ).first()
-                    
-                    if existing:
-                        skipped += 1
-                        continue
-                    
-                    transaction = BankTransaction(
-                        statement_id=statement.id,
-                        transaction_date=trans_data['transaction_date'],
-                        posting_date=trans_data['posting_date'],
-                        description=trans_data['description'],
-                        debits=trans_data['debits'],
-                        credits=trans_data['credits'],
-                        balance=trans_data['balance'],
-                        bank_account=trans_data['bank_account'],
-                        reference=trans_data['reference']
-                    )
-                    db.session.add(transaction)
-                    imported += 1
-                
-                total_imported += imported
-                total_skipped += skipped
-                files_processed += 1
-                
-            except Exception as e:
-                logger.error(f"Error processing {file.filename}: {str(e)}")
-                continue
-        
-        db.session.commit()
-        
-        flash(f'? Processed {files_processed} files: {total_imported} imported, {total_skipped} skipped', 'success')
-        return redirect(url_for('gmail.transactions'))
+def transactions():
+    """List all transactions"""
+    page = request.args.get('page', 1, type=int)
+    per_page = current_app.config.get('ITEMS_PER_PAGE', 20)
     
-    return render_template('gmail/bulk_csv_import.html')
+    query = BankTransaction.query.filter_by(user_id=current_user.id)
+    
+    # Apply filters
+    if request.args.get('uncategorized'):
+        query = query.filter_by(category_id=None)
+    
+    if request.args.get('not_synced'):
+        query = query.filter_by(erpnext_synced=False)
+    
+    # Order and paginate
+    transactions = query.order_by(BankTransaction.date.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+    
+    return render_template('gmail/transactions.html', transactions=transactions)
