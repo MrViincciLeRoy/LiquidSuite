@@ -134,7 +134,7 @@ jobs:
                   print("   Will add it in next step...")
           PYTHON
       
-      - name: Add statement_id Column
+      - name: Add All Missing Columns
         env:
           DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
         run: |
@@ -143,52 +143,128 @@ jobs:
           from sqlalchemy import create_engine, text, inspect
           
           print("\n" + "=" * 70)
-          print("  ADDING statement_id COLUMN")
+          print("  ADDING ALL MISSING COLUMNS")
           print("=" * 70)
           
           db_url = os.getenv('DATABASE_URL')
           engine = create_engine(db_url)
           
+          # Define all required columns with their SQL types
+          required_columns = {
+              'statement_id': 'INTEGER',
+              'erpnext_journal_entry': 'VARCHAR(100)',
+              'erpnext_error': 'TEXT',
+              'erpnext_id': 'VARCHAR(100)',
+              'erpnext_synced': 'BOOLEAN DEFAULT FALSE',
+              'erpnext_sync_date': 'TIMESTAMP',
+              'category_id': 'INTEGER',
+              'tags': 'VARCHAR(500)',
+              'notes': 'TEXT',
+              'is_reconciled': 'BOOLEAN DEFAULT FALSE',
+              'reconciled_date': 'TIMESTAMP',
+              'invoice_id': 'INTEGER',
+              'currency': 'VARCHAR(3) DEFAULT \'ZAR\'',
+              'unallocated_amount': 'NUMERIC(15, 2)',
+          }
+          
           with engine.connect() as conn:
-              # Check if column already exists
               inspector = inspect(engine)
-              columns = [col['name'] for col in inspector.get_columns('bank_transactions')]
+              existing_columns = [col['name'] for col in inspector.get_columns('bank_transactions')]
               
-              if 'statement_id' in columns:
-                  print("\n✅ statement_id already exists - skipping")
+              print(f"\n📋 Existing columns: {len(existing_columns)}")
+              print(f"📋 Required columns: {len(required_columns)}")
+              
+              missing_columns = {k: v for k, v in required_columns.items() if k not in existing_columns}
+              
+              if not missing_columns:
+                  print("\n✅ All columns already exist!")
                   exit(0)
+              
+              print(f"\n⚠️  Missing {len(missing_columns)} columns:")
+              for col in missing_columns:
+                  print(f"  - {col}")
               
               trans = conn.begin()
               
               try:
-                  print("\n🔧 Step 1: Adding statement_id column...")
-                  conn.execute(text("""
-                      ALTER TABLE bank_transactions 
-                      ADD COLUMN statement_id INTEGER
-                  """))
-                  print("   ✅ Column added")
+                  # Add all missing columns
+                  for col_name, col_type in missing_columns.items():
+                      print(f"\n🔧 Adding {col_name}...")
+                      conn.execute(text(f"""
+                          ALTER TABLE bank_transactions 
+                          ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                      """))
+                      print(f"   ✅ {col_name} added")
                   
-                  print("\n🔧 Step 2: Adding foreign key constraint...")
-                  conn.execute(text("""
-                      ALTER TABLE bank_transactions 
-                      ADD CONSTRAINT fk_bank_transactions_statement 
-                      FOREIGN KEY (statement_id) 
-                      REFERENCES email_statements(id) 
-                      ON DELETE SET NULL
-                  """))
-                  print("   ✅ Foreign key added")
+                  # Add foreign keys if columns were added
+                  if 'statement_id' in missing_columns:
+                      print("\n🔧 Adding statement_id foreign key...")
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP CONSTRAINT IF EXISTS fk_bank_transactions_statement
+                      """))
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD CONSTRAINT fk_bank_transactions_statement 
+                          FOREIGN KEY (statement_id) 
+                          REFERENCES email_statements(id) 
+                          ON DELETE SET NULL
+                      """))
+                      print("   ✅ Foreign key added")
                   
-                  print("\n🔧 Step 3: Adding index for performance...")
-                  conn.execute(text("""
-                      CREATE INDEX idx_bank_transactions_statement_id 
-                      ON bank_transactions(statement_id)
-                  """))
-                  print("   ✅ Index created")
+                  if 'category_id' in missing_columns:
+                      print("\n🔧 Adding category_id foreign key...")
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP CONSTRAINT IF EXISTS fk_bank_transactions_category_id
+                      """))
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD CONSTRAINT fk_bank_transactions_category_id 
+                          FOREIGN KEY (category_id) 
+                          REFERENCES transaction_categories(id) 
+                          ON DELETE SET NULL
+                      """))
+                      print("   ✅ Foreign key added")
+                  
+                  if 'invoice_id' in missing_columns:
+                      print("\n🔧 Adding invoice_id foreign key...")
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP CONSTRAINT IF EXISTS fk_bank_transactions_invoice
+                      """))
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD CONSTRAINT fk_bank_transactions_invoice 
+                          FOREIGN KEY (invoice_id) 
+                          REFERENCES invoices(id) 
+                          ON DELETE SET NULL
+                      """))
+                      print("   ✅ Foreign key added")
+                  
+                  # Add indexes
+                  print("\n🔧 Adding indexes...")
+                  if 'statement_id' in missing_columns:
+                      conn.execute(text("""
+                          CREATE INDEX IF NOT EXISTS idx_bank_transactions_statement_id 
+                          ON bank_transactions(statement_id)
+                      """))
+                  if 'category_id' in missing_columns:
+                      conn.execute(text("""
+                          CREATE INDEX IF NOT EXISTS idx_bank_transactions_category_id 
+                          ON bank_transactions(category_id)
+                      """))
+                  if 'erpnext_id' in missing_columns:
+                      conn.execute(text("""
+                          CREATE INDEX IF NOT EXISTS idx_bank_transactions_erpnext_id 
+                          ON bank_transactions(erpnext_id)
+                      """))
+                  print("   ✅ Indexes created")
                   
                   trans.commit()
                   
                   print("\n" + "=" * 70)
-                  print("✅ MIGRATION COMPLETED SUCCESSFULLY!")
+                  print("✅ ALL COLUMNS ADDED SUCCESSFULLY!")
                   print("=" * 70)
                   
               except Exception as e:
