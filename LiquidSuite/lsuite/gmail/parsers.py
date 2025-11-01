@@ -1,5 +1,6 @@
 """
 PDF Parser - Extract transactions from bank statement PDFs
+LiquidSuite/lsuite/gmail/parsers.py - COMPLETE FIXED VERSION
 """
 import io
 import re
@@ -82,7 +83,7 @@ class PDFParser:
         return text
     
     def _parse_tymebank(self, text):
-        """Parse TymeBank PDF format
+        """Parse TymeBank PDF format - FIXED VERSION
         
         TymeBank format:
         Date Description Fees Money Out Money In Balance
@@ -129,9 +130,10 @@ class PDFParser:
                         if re.match(r'^\d{1,2}\s+\w{3}\s+\d{4}', next_line):
                             break
                         
-                        # Check if this line has the amounts pattern (4 numbers/dashes followed by balance)
-                        # Pattern: - 512.46 - 417.59  OR  70.00 - - 930.05
-                        amount_pattern = r'^(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})\s*$'
+                        # ✅ FIX: Better pattern that validates amounts are actually monetary values
+                        # Pattern: up to 4 amount fields (fees, money_out, money_in, balance)
+                        # Each field is either "-" or a valid decimal number
+                        amount_pattern = r'^(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+((?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s*$'
                         amount_match = re.match(amount_pattern, next_line)
                         
                         if amount_match:
@@ -145,7 +147,7 @@ class PDFParser:
                             break
                         else:
                             # Check if amounts are at the end of this line
-                            inline_pattern = r'(.+?)\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})\s*$'
+                            inline_pattern = r'(.+?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+((?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s*$'
                             inline_amount_match = re.search(inline_pattern, next_line)
                             
                             if inline_amount_match:
@@ -159,15 +161,18 @@ class PDFParser:
                                 i = j
                                 break
                             else:
-                                # This line is part of the description
-                                if next_line and not next_line.startswith('-'):
-                                    description_parts.append(next_line)
+                                # ✅ FIX: Only add to description if it's not a random number
+                                # Skip lines that are just long numbers (like card numbers: 525309988959)
+                                if next_line and not re.match(r'^\d{10,}$', next_line):
+                                    # Check if it's a valid description line
+                                    if len(next_line) > 0 and not next_line.startswith('-'):
+                                        description_parts.append(next_line)
                         
                         j += 1
                     
                     # Try to find amounts on the same line as date if not found yet
                     if not amounts_found:
-                        same_line_pattern = r'(.+?)\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+(-|[\d\s,]+\.\d{2})\s+([\d\s,]+\.\d{2})\s*$'
+                        same_line_pattern = r'(.+?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+((?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s*$'
                         same_line_match = re.search(same_line_pattern, rest_of_line)
                         
                         if same_line_match:
@@ -189,38 +194,48 @@ class PDFParser:
                             i += 1
                             continue
                         
+                        # ✅ FIX: Parse amounts with validation
+                        def parse_amount_safe(amount_str):
+                            """Safely parse amount with validation"""
+                            if not amount_str or amount_str == '-':
+                                return 0
+                            try:
+                                # Remove commas and spaces
+                                cleaned = amount_str.replace(',', '').replace(' ', '').strip()
+                                # Ensure it's not too large (max 10 million for a single transaction)
+                                val = float(cleaned)
+                                if val > 10_000_000:  # 10 million limit
+                                    logger.warning(f"Amount too large, likely parsing error: {val} from '{amount_str}'")
+                                    return 0
+                                return val
+                            except (ValueError, AttributeError):
+                                logger.warning(f"Could not parse amount: '{amount_str}'")
+                                return 0
+                        
                         # Determine transaction type and amount
                         amount = 0
                         trans_type = 'debit'
                         
                         # Check Money In first (credits)
-                        if money_in and money_in != '-':
-                            amount_str = money_in.replace(',', '').replace(' ', '').strip()
-                            try:
-                                amount = float(amount_str)
-                                trans_type = 'credit'
-                            except ValueError:
-                                pass
+                        money_in_val = parse_amount_safe(money_in)
+                        if money_in_val > 0:
+                            amount = money_in_val
+                            trans_type = 'credit'
                         
                         # Then check Money Out (debits)
-                        if amount == 0 and money_out and money_out != '-':
-                            amount_str = money_out.replace(',', '').replace(' ', '').strip()
-                            try:
-                                amount = float(amount_str)
-                                trans_type = 'debit'
-                            except ValueError:
-                                pass
+                        money_out_val = parse_amount_safe(money_out)
+                        if amount == 0 and money_out_val > 0:
+                            amount = money_out_val
+                            trans_type = 'debit'
                         
                         # Then check Fees (also debits)
-                        if amount == 0 and fees and fees != '-':
-                            amount_str = fees.replace(',', '').replace(' ', '').strip()
-                            try:
-                                amount = float(amount_str)
-                                trans_type = 'debit'
-                                description = f"{description} (Fee)"
-                            except ValueError:
-                                pass
+                        fees_val = parse_amount_safe(fees)
+                        if amount == 0 and fees_val > 0:
+                            amount = fees_val
+                            trans_type = 'debit'
+                            description = f"{description} (Fee)"
                         
+                        # Only add if we have a valid amount
                         if amount > 0:
                             transactions.append({
                                 'date': trans_date,
@@ -229,6 +244,9 @@ class PDFParser:
                                 'type': trans_type,
                                 'reference': f"TYME-{trans_date.strftime('%Y%m%d')}-{len(transactions)}"
                             })
+                            logger.debug(f"Parsed transaction: {description[:30]} = {amount}")
+                        else:
+                            logger.debug(f"Skipped transaction with zero amount: {description[:30]}")
                     
                 except (ValueError, IndexError) as e:
                     logger.warning(f"Failed to parse TymeBank transaction: {e}")
@@ -248,7 +266,6 @@ class PDFParser:
         transactions = []
         
         # Capitec typically uses format: Date Description Amount
-        # Split into lines for better parsing
         lines = text.split('\n')
         
         i = 0
@@ -256,7 +273,6 @@ class PDFParser:
             line = lines[i].strip()
             
             # Look for date patterns at start of line
-            # Capitec uses formats like: 2024/01/12 or 12/01/2024 or 12 Jan
             date_patterns = [
                 (r'^(\d{4}/\d{2}/\d{2})\s+(.+)', '%Y/%m/%d'),
                 (r'^(\d{2}/\d{2}/\d{4})\s+(.+)', '%d/%m/%Y'),
@@ -281,7 +297,6 @@ class PDFParser:
                         trans_date = datetime.strptime(date_str, date_format).date()
                         
                         # Try to find amount on same line
-                        # Pattern: Description Amount (may have R prefix, comma thousands)
                         amount_pattern = r'(.+?)\s+(-?R?\s?[\d\s,]+\.\d{2})\s*$'
                         amount_match = re.search(amount_pattern, rest)
                         
@@ -303,31 +318,6 @@ class PDFParser:
                                     matched = True
                             except ValueError:
                                 pass
-                        else:
-                            # Amount might be on next line, check ahead
-                            if i + 1 < len(lines):
-                                next_line = lines[i + 1].strip()
-                                # Check if next line is just an amount
-                                next_amount_pattern = r'^-?R?\s?[\d\s,]+\.\d{2}\s*$'
-                                if re.match(next_amount_pattern, next_line):
-                                    description = rest
-                                    amount_str = next_line.replace('R', '').replace(',', '').replace(' ', '').strip()
-                                    
-                                    try:
-                                        amount = float(amount_str)
-                                        
-                                        if len(description) >= 3:
-                                            transactions.append({
-                                                'date': trans_date,
-                                                'description': description,
-                                                'amount': abs(amount),
-                                                'type': 'debit' if amount < 0 or '-' in next_line else 'credit',
-                                                'reference': f"CAP-{trans_date.strftime('%Y%m%d')}-{len(transactions)}"
-                                            })
-                                            matched = True
-                                            i += 1  # Skip next line since we used it
-                                    except ValueError:
-                                        pass
                         
                         if matched:
                             break
@@ -350,13 +340,9 @@ class PDFParser:
         
         # Generic patterns that might work for various banks
         patterns = [
-            # Date | Description | Amount
             (r'(\d{2}/\d{2}/\d{4})\s*[|\|]\s*([^|\|]+?)\s*[|\|]\s*(-?R?[\d,]+\.\d{2})', '%d/%m/%Y'),
-            # Date Description Amount
             (r'(\d{2}/\d{2}/\d{4})\s+([^\d\-\+\$R]+?)\s+(-?R?[\d,]+\.\d{2})', '%d/%m/%Y'),
-            # YYYY-MM-DD Description Amount
             (r'(\d{4}-\d{2}-\d{2})\s+([^\d\-\+\$R]+?)\s+(-?R?[\d,]+\.\d{2})', '%Y-%m-%d'),
-            # DD Mon YYYY Description Amount
             (r'(\d{2}\s+\w{3}\s+\d{4})\s+([^\d\-\+\$R]+?)\s+(-?R?[\d,]+\.\d{2})', '%d %b %Y'),
         ]
         
@@ -373,7 +359,7 @@ class PDFParser:
                         amount_str = match[2].replace('R', '').replace('$', '').replace(',', '').strip()
                         amount = float(amount_str)
                         
-                        # Skip if description is too short (likely parsing error)
+                        # Skip if description is too short
                         if len(description) < 3:
                             continue
                         
@@ -402,8 +388,6 @@ class PDFParser:
         
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
-            
-            # Find transaction table
             tables = soup.find_all('table')
             
             for table in tables:
@@ -415,12 +399,11 @@ class PDFParser:
                     
                     if len(cols) >= 3:
                         try:
-                            # Assuming: Date | Description | Amount
                             date_text = cols[0].get_text().strip()
                             description = cols[1].get_text().strip()
                             amount_text = cols[2].get_text().strip()
                             
-                            # Parse date (try multiple formats)
+                            # Parse date
                             trans_date = None
                             for date_fmt in ['%d/%m/%Y', '%Y-%m-%d', '%d %b %Y']:
                                 try:
