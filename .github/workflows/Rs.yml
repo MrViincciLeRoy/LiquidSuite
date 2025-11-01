@@ -1,0 +1,283 @@
+# ============================================================================
+# migrate-category-to-category-id.yml - Migrate category column
+# ============================================================================
+# Renames bank_transactions.category to category_id and adds foreign key
+# ============================================================================
+
+name: Migrate Category Column
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Migration action'
+        required: true
+        default: 'migrate'
+        type: choice
+        options:
+          - check
+          - migrate
+          - rollback
+
+jobs:
+  migrate-column:
+    name: Migrate Category Column
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        working-directory: LiquidSuite
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Check Current Schema
+        if: github.event.inputs.action == 'check' || github.event.inputs.action == 'migrate'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: production
+        run: |
+          echo "🔍 Checking current schema..."
+          echo "============================="
+          echo ""
+          
+          python << 'PYTHON_SCRIPT'
+          import sys
+          import os
+          from sqlalchemy import text, create_engine
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Check for category column
+              result = conn.execute(text("""
+                  SELECT column_name, data_type 
+                  FROM information_schema.columns 
+                  WHERE table_name = 'bank_transactions' 
+                  AND column_name IN ('category', 'category_id')
+                  ORDER BY column_name
+              """))
+              
+              columns = {row[0]: row[1] for row in result}
+              
+              print("Current columns in bank_transactions:")
+              if 'category' in columns:
+                  print(f"  ✓ category: {columns['category']}")
+              else:
+                  print("  ✗ category: NOT FOUND")
+              
+              if 'category_id' in columns:
+                  print(f"  ✓ category_id: {columns['category_id']}")
+              else:
+                  print("  ✗ category_id: NOT FOUND")
+              
+              print()
+              
+              if 'category' in columns and 'category_id' not in columns:
+                  print("⚠️  Migration needed: category → category_id")
+              elif 'category_id' in columns and 'category' not in columns:
+                  print("✅ Already migrated!")
+              elif 'category' in columns and 'category_id' in columns:
+                  print("⚠️  Both columns exist - needs cleanup")
+              else:
+                  print("❌ Neither column exists - needs table recreation")
+          PYTHON_SCRIPT
+      
+      - name: Migrate Column
+        if: github.event.inputs.action == 'migrate'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: production
+        run: |
+          echo ""
+          echo "🔄 Migrating category to category_id..."
+          echo "========================================"
+          echo ""
+          
+          python << 'PYTHON_SCRIPT'
+          import sys
+          import os
+          from sqlalchemy import text, create_engine
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Start transaction
+              trans = conn.begin()
+              
+              try:
+                  # Check current state
+                  result = conn.execute(text("""
+                      SELECT column_name 
+                      FROM information_schema.columns 
+                      WHERE table_name = 'bank_transactions' 
+                      AND column_name IN ('category', 'category_id')
+                  """))
+                  existing_cols = [row[0] for row in result]
+                  
+                  # Step 1: Drop category column if it exists
+                  if 'category' in existing_cols:
+                      print("Step 1: Dropping old 'category' column...")
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP COLUMN IF EXISTS category CASCADE
+                      """))
+                      print("  ✅ Dropped")
+                  else:
+                      print("Step 1: 'category' column already removed")
+                  
+                  # Step 2: Add category_id if it doesn't exist
+                  if 'category_id' not in existing_cols:
+                      print("\nStep 2: Adding 'category_id' column...")
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD COLUMN category_id INTEGER
+                      """))
+                      print("  ✅ Added")
+                  else:
+                      print("\nStep 2: 'category_id' column already exists")
+                  
+                  # Step 3: Add foreign key constraint
+                  print("\nStep 3: Adding foreign key constraint...")
+                  
+                  # Drop constraint if exists
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      DROP CONSTRAINT IF EXISTS fk_bank_transactions_category_id
+                  """))
+                  
+                  # Add new constraint
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      ADD CONSTRAINT fk_bank_transactions_category_id 
+                      FOREIGN KEY (category_id) 
+                      REFERENCES transaction_categories(id) 
+                      ON DELETE SET NULL
+                  """))
+                  print("  ✅ Foreign key added")
+                  
+                  # Commit transaction
+                  trans.commit()
+                  
+                  print("\n✅ Migration completed successfully!")
+                  
+              except Exception as e:
+                  trans.rollback()
+                  print(f"\n❌ Migration failed: {e}")
+                  sys.exit(1)
+          PYTHON_SCRIPT
+      
+      - name: Rollback Migration
+        if: github.event.inputs.action == 'rollback'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: production
+        run: |
+          echo ""
+          echo "⏪ Rolling back migration..."
+          echo "============================"
+          echo ""
+          
+          python << 'PYTHON_SCRIPT'
+          import sys
+          import os
+          from sqlalchemy import text, create_engine
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              trans = conn.begin()
+              
+              try:
+                  # Drop foreign key
+                  print("Removing foreign key constraint...")
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      DROP CONSTRAINT IF EXISTS fk_bank_transactions_category_id
+                  """))
+                  
+                  # Drop category_id
+                  print("Removing category_id column...")
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      DROP COLUMN IF EXISTS category_id
+                  """))
+                  
+                  # Add back category as string
+                  print("Adding back category column...")
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      ADD COLUMN category VARCHAR(100)
+                  """))
+                  
+                  trans.commit()
+                  print("\n✅ Rollback completed!")
+                  
+              except Exception as e:
+                  trans.rollback()
+                  print(f"\n❌ Rollback failed: {e}")
+                  sys.exit(1)
+          PYTHON_SCRIPT
+      
+      - name: Verify Migration
+        if: github.event.inputs.action == 'migrate' || github.event.inputs.action == 'rollback'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: production
+        run: |
+          echo ""
+          echo "🔍 Verifying schema..."
+          echo "======================"
+          echo ""
+          python scripts/init_db.py check
+      
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "✅ OPERATION COMPLETE"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "Action: ${{ github.event.inputs.action }}"
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo ""
+          
+          case "${{ github.event.inputs.action }}" in
+            check)
+              echo "Schema checked - see results above"
+              ;;
+            migrate)
+              echo "✅ Column migrated: category → category_id"
+              echo "✅ Foreign key constraint added"
+              echo ""
+              echo "Your database is now ready!"
+              ;;
+            rollback)
+              echo "✅ Migration rolled back"
+              echo "⚠️  Back to old schema (category column)"
+              ;;
+          esac
