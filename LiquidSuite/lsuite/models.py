@@ -81,38 +81,6 @@ class BankAccount(db.Model):
     def __repr__(self):
         return f'<BankAccount {self.account_name}>'
         
-class TransactionCategory(db.Model):
-    """Transaction categorization for ERPNext mapping"""
-    __tablename__ = 'transaction_categories'
-    
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False, unique=True)
-    erpnext_account = db.Column(db.String(200), nullable=False)
-    transaction_type = db.Column(db.String(20), nullable=False)  # expense, income, transfer
-    keywords = db.Column(db.Text)  # Comma-separated
-    active = db.Column(db.Boolean, default=True)
-    color = db.Column(db.Integer)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
-    # Relationships
-    transactions = db.relationship('BankTransaction', backref='category', lazy='dynamic')
-    
-    def get_keywords_list(self):
-        """Return keywords as a list"""
-        if not self.keywords:
-            return []
-        return [k.strip().lower() for k in self.keywords.split(',')]
-    
-    def matches_description(self, description):
-        """Check if any keyword matches the description"""
-        if not description:
-            return False
-        description_lower = description.lower()
-        return any(keyword in description_lower for keyword in self.get_keywords_list())
-    
-    def __repr__(self):
-        return f'<TransactionCategory {self.name}>'
-
 
 class Transaction(db.Model):
     """Bank transaction model (legacy)"""
@@ -185,6 +153,51 @@ class GoogleCredential(db.Model):
         return f'<GoogleCredential {self.name}>'
 
 
+# URGENT FIX: Replace these sections in lsuite/models.py
+
+# ============================================================================
+# FIX 1: TransactionCategory (around line 84-100)
+# ============================================================================
+# REMOVE the 'backref' parameter, use 'back_populates' instead
+
+class TransactionCategory(db.Model):
+    """Transaction categorization for ERPNext mapping"""
+    __tablename__ = 'transaction_categories'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    erpnext_account = db.Column(db.String(200), nullable=False)
+    transaction_type = db.Column(db.String(20), nullable=False)  # expense, income, transfer
+    keywords = db.Column(db.Text)  # Comma-separated
+    active = db.Column(db.Boolean, default=True)
+    color = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # FIXED: Use back_populates instead of backref
+    transactions = db.relationship('BankTransaction', back_populates='category', lazy='dynamic')
+    
+    def get_keywords_list(self):
+        """Return keywords as a list"""
+        if not self.keywords:
+            return []
+        return [k.strip().lower() for k in self.keywords.split(',')]
+    
+    def matches_description(self, description):
+        """Check if any keyword matches the description"""
+        if not description:
+            return False
+        description_lower = description.lower()
+        return any(keyword in description_lower for keyword in self.get_keywords_list())
+    
+    def __repr__(self):
+        return f'<TransactionCategory {self.name}>'
+
+
+# ============================================================================
+# FIX 2: BankTransaction (around line 215-250)
+# ============================================================================
+# The category field appears TWICE - remove the duplicate at line 226
+
 class BankTransaction(db.Model):
     """Bank transaction model for ERPNext integration"""
     __tablename__ = 'bank_transactions'
@@ -208,8 +221,8 @@ class BankTransaction(db.Model):
     currency = db.Column(db.String(3), default='ZAR')
     unallocated_amount = db.Column(db.Numeric(15, 2))
     
-    # Categorization
-    category = db.Column(db.String(100))
+    # Categorization - REMOVE this duplicate 'category' string field
+    # category = db.Column(db.String(100))  # DELETE THIS LINE
     tags = db.Column(db.String(500))
     notes = db.Column(db.Text)
     
@@ -223,12 +236,14 @@ class BankTransaction(db.Model):
     erpnext_synced = db.Column(db.Boolean, default=False)
     erpnext_sync_date = db.Column(db.DateTime)
     
+    # Foreign key to category (KEEP THIS - place it BEFORE the relationship)
+    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'), nullable=True)
+    
     # Metadata
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'), nullable=True)
     
-    # Relationship to category (many-to-one: many transactions to one category)
+    # Relationship to category (KEEP THIS)
     category = db.relationship('TransactionCategory', back_populates='transactions')
 
     @property
@@ -261,7 +276,6 @@ class BankTransaction(db.Model):
     
     def __repr__(self):
         return f'<BankTransaction {self.reference_number or self.id}>'
-
 
 # =============================================================================
 # Email Statement Models
