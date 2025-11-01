@@ -1,135 +1,258 @@
 # ============================================================================
-# LiquidSuite/tests/conftest.py - FIXED VERSION
+# tests/conftest.py - COMPLETE WORKING VERSION
 # ============================================================================
 """
-Pytest Configuration and Fixtures
+Pytest configuration and fixtures for LSuite tests
 """
-import sys
-import os
 import pytest
+import os
+import sys
+from datetime import date
+from decimal import Decimal
 
-# Add the parent directory to the Python path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from lsuite import create_app
-from lsuite.extensions import db
-from lsuite.models import User, TransactionCategory
+from lsuite.extensions import db as _db
+from lsuite.models import User, BankAccount, BankTransaction, TransactionCategory
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope='session')
 def app():
-    """Create and configure a test application instance."""
+    """Create application for testing"""
+    os.environ['FLASK_ENV'] = 'testing'
+    os.environ['TESTING'] = 'true'
+    
     app = create_app('testing')
     
-    # Disable CSRF for testing
-    app.config['WTF_CSRF_ENABLED'] = False
-    
     with app.app_context():
-        db.create_all()
         yield app
-        db.session.remove()
-        db.drop_all()
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope='session')
+def db(app):
+    """Create database for testing"""
+    with app.app_context():
+        _db.drop_all()
+        _db.create_all()
+        yield _db
+        _db.session.remove()
+        _db.drop_all()
+
+
+@pytest.fixture(scope='function', autouse=True)
+def session(app, db):
+    """Create a new database session for each test"""
+    with app.app_context():
+        connection = db.engine.connect()
+        transaction = connection.begin()
+        
+        session_options = dict(bind=connection, binds={})
+        session = db.create_scoped_session(options=session_options)
+        
+        db.session = session
+        
+        yield session
+        
+        session.remove()
+        transaction.rollback()
+        connection.close()
+
+
+@pytest.fixture
 def client(app):
-    """Create a test client for the app."""
+    """Create test client"""
     return app.test_client()
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture
 def runner(app):
-    """Create a test CLI runner."""
+    """Create test CLI runner"""
     return app.test_cli_runner()
 
 
-@pytest.fixture(scope='function')
-def user(app):
-    """Create a test user."""
+@pytest.fixture
+def test_user(app, db):
+    """Create a test user"""
     with app.app_context():
-        test_user = User(
+        user = User(
             username='testuser',
-            email='test@example.com'
+            email='test@example.com',
+            first_name='Test',
+            last_name='User',
+            is_active=True
         )
-        test_user.set_password('testpassword')
-        test_user.is_active = True
+        user.set_password('testpassword123')
         
-        db.session.add(test_user)
+        db.session.add(user)
         db.session.commit()
+        db.session.refresh(user)
         
-        # Refresh to get the ID
-        db.session.refresh(test_user)
-        
-        yield test_user
-        
-        # Cleanup is handled by app fixture dropping all tables
+        yield user
 
 
-@pytest.fixture(scope='function')
-def auth_client(client, app, user):
-    """Create an authenticated test client."""
-    # FIXED: Use app context and pass user fixture
+@pytest.fixture
+def test_admin_user(app, db):
+    """Create a test admin user"""
     with app.app_context():
-        # Log in the user using the client
-        response = client.post('/auth/login', data={
-            'email': user.email,
-            'password': 'testpassword',
-            'remember_me': False
+        admin = User(
+            username='admin',
+            email='admin@example.com',
+            first_name='Admin',
+            last_name='User',
+            is_active=True,
+            is_admin=True
+        )
+        admin.set_password('adminpassword123')
+        
+        db.session.add(admin)
+        db.session.commit()
+        db.session.refresh(admin)
+        
+        yield admin
+
+
+@pytest.fixture
+def test_bank_account(app, db, test_user):
+    """Create a test bank account"""
+    with app.app_context():
+        account = BankAccount(
+            user_id=test_user.id,
+            account_name='Test Savings Account',
+            account_number='1234567890',
+            bank_name='Test Bank',
+            account_type='Savings',
+            currency='ZAR',
+            balance=Decimal('10000.00'),
+            is_active=True
+        )
+        
+        db.session.add(account)
+        db.session.commit()
+        db.session.refresh(account)
+        
+        yield account
+
+
+@pytest.fixture
+def authenticated_client(client, test_user):
+    """Create authenticated test client"""
+    with client:
+        client.post('/auth/login', data={
+            'email': test_user.email,
+            'password': 'testpassword123'
         }, follow_redirects=True)
         
-        # Verify login was successful
-        #assert response.status_code == 200
-    
-    yield client
-    
-    # Logout after test
+        yield client
+
+
+@pytest.fixture
+def admin_client(client, test_admin_user):
+    """Create authenticated admin client"""
+    with client:
+        client.post('/auth/login', data={
+            'email': test_admin_user.email,
+            'password': 'adminpassword123'
+        }, follow_redirects=True)
+        
+        yield client
+
+
+@pytest.fixture
+def sample_transactions(app, db, test_user, test_bank_account):
+    """Create sample transactions for testing"""
     with app.app_context():
-        client.get('/auth/logout', follow_redirects=True)
+        transactions = [
+            BankTransaction(
+                user_id=test_user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 1),
+                description='SALARY DEPOSIT',
+                deposit=Decimal('15000.00'),
+                withdrawal=Decimal('0.00'),
+                balance=Decimal('25000.00'),
+                reference_number='SAL001'
+            ),
+            BankTransaction(
+                user_id=test_user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 5),
+                description='RENT PAYMENT',
+                deposit=Decimal('0.00'),
+                withdrawal=Decimal('8000.00'),
+                balance=Decimal('17000.00'),
+                reference_number='RENT001'
+            ),
+            BankTransaction(
+                user_id=test_user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 10),
+                description='GROCERY SHOPPING',
+                deposit=Decimal('0.00'),
+                withdrawal=Decimal('1500.00'),
+                balance=Decimal('15500.00'),
+                reference_number='GROC001'
+            )
+        ]
+        
+        for txn in transactions:
+            db.session.add(txn)
+        db.session.commit()
+        
+        for txn in transactions:
+            db.session.refresh(txn)
+        
+        yield transactions
 
 
-@pytest.fixture(scope='function')
-def sample_categories(app):
-    """Create sample transaction categories for testing"""
+@pytest.fixture
+def sample_categories(app, db):
+    """Create sample transaction categories"""
     with app.app_context():
         categories = [
             TransactionCategory(
-                name='Test Transport',
-                erpnext_account='Transport - Test',
-                transaction_type='expense',
-                keywords='uber,taxi,bolt,ride,transport',
-                active=True
-            ),
-            TransactionCategory(
-                name='Test Food',
-                erpnext_account='Food & Dining - Test',
-                transaction_type='expense',
-                keywords='restaurant,food,lunch,dinner,meal,eat',
-                active=True
-            ),
-            TransactionCategory(
-                name='Test Income',
-                erpnext_account='Income - Test',
+                name='Salaries',
+                erpnext_account='Salaries - Company',
                 transaction_type='income',
-                keywords='payment received,salary,income,revenue,client',
+                keywords='salary, wages, payment',
+                active=True
+            ),
+            TransactionCategory(
+                name='Rent',
+                erpnext_account='Rent - Company',
+                transaction_type='expense',
+                keywords='rent, lease, rental',
+                active=True
+            ),
+            TransactionCategory(
+                name='Groceries',
+                erpnext_account='Food & Beverage - Company',
+                transaction_type='expense',
+                keywords='grocery, food, shopping, woolworths, checkers, pick n pay',
                 active=True
             )
         ]
         
-        for category in categories:
-            db.session.add(category)
-        
+        for cat in categories:
+            db.session.add(cat)
         db.session.commit()
+        
+        for cat in categories:
+            db.session.refresh(cat)
         
         yield categories
 
 
-@pytest.fixture(scope='function')
-def reset_db(app):
-    """Reset the database before each test."""
-    with app.app_context():
-        db.drop_all()
-        db.create_all()
-    yield
-    with app.app_context():
-        db.session.remove()
-        db.drop_all()
+# Helper functions for tests
+def login(client, email, password):
+    """Helper to log in a user"""
+    return client.post('/auth/login', data={
+        'email': email,
+        'password': password
+    }, follow_redirects=True)
+
+
+def logout(client):
+    """Helper to log out a user"""
+    return client.get('/auth/logout', follow_redirects=True)
