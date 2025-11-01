@@ -1,5 +1,5 @@
 # ============================================================================
-# lsuite/main/routes.py
+# lsuite/main/routes.py - FIXED VERSION
 # ============================================================================
 """
 Main Blueprint - Dashboard and Home
@@ -30,9 +30,9 @@ def index():
         'synced': BankTransaction.query.filter_by(erpnext_synced=True).count(),
     }
     
-    # Recent statements
+    # Recent statements - FIXED: Use received_date instead of date
     recent_statements = EmailStatement.query.order_by(
-        EmailStatement.date.desc()
+        EmailStatement.received_date.desc()
     ).limit(5).all()
     
     # Recent transactions
@@ -45,7 +45,8 @@ def index():
     category_stats = db.session.query(
         TransactionCategory.name,
         func.count(BankTransaction.id).label('count'),
-        func.sum(BankTransaction.amount).label('total')
+        func.sum(BankTransaction.withdrawal).label('total_withdrawals'),
+        func.sum(BankTransaction.deposit).label('total_deposits')
     ).join(
         BankTransaction, BankTransaction.category_id == TransactionCategory.id
     ).group_by(
@@ -57,8 +58,8 @@ def index():
         ERPNextSyncLog.sync_date.desc()
     ).limit(5).all()
     
-    # ERPNext config status
-    erpnext_config = ERPNextConfig.query.filter_by(active=True).first()
+    # ERPNext config status - FIXED: Use is_active instead of active
+    erpnext_config = ERPNextConfig.query.filter_by(is_active=True).first()
     
     # Calculate ready to sync
     ready_to_sync = BankTransaction.query.filter(
@@ -77,13 +78,14 @@ def index():
         ready_to_sync=ready_to_sync
     )
 
+
 @main_bp.route('/api/health')
 def health_check():
     """Health check endpoint for monitoring"""
     try:
         # Check database connection
         from lsuite.extensions import db
-        db.session.execute('SELECT 1')
+        db.session.execute(db.text('SELECT 1'))
         db_status = 'healthy'
     except Exception as e:
         db_status = f'unhealthy: {str(e)}'
@@ -93,7 +95,8 @@ def health_check():
         'database': db_status,
         'timestamp': datetime.utcnow().isoformat()
     }, 200
-    
+
+
 @main_bp.route('/about')
 def about():
     """About page"""
