@@ -3,7 +3,6 @@
 # ============================================================================
 """
 Gmail Routes - OAuth, Statement Import, CSV Upload
-NO DUPLICATES - Clean version
 """
 from flask import render_template, redirect, url_for, flash, request, current_app, make_response
 from flask_login import login_required, current_user
@@ -184,7 +183,7 @@ def statement_detail(id):
 @gmail_bp.route('/statements/<int:id>/parse', methods=['POST'])
 @login_required
 def parse_statement(id):
-    """Parse PDF from statement"""
+    """Parse PDF from statement with password support - FIXED VERSION"""
     statement = EmailStatement.query.get_or_404(id)
     
     if statement.user_id != current_user.id:
@@ -200,14 +199,60 @@ def parse_statement(id):
         flash('No authenticated Google credential', 'danger')
         return redirect(url_for('gmail.statements'))
     
+    # ✅ FIX: Get password from form - check for 'yes' value
+    pdf_password = request.form.get('pdf_password', '').strip()
+    save_password = request.form.get('save_password') == 'yes'
+    
+    logger.info(f"Parse request for statement {id}")
+    logger.info(f"Password provided: {'Yes' if pdf_password else 'No'} (length: {len(pdf_password) if pdf_password else 0})")
+    logger.info(f"Save password: {save_password}")
+    logger.info(f"Existing saved password: {'Yes' if statement.pdf_password else 'No'}")
+    
+    # Determine which password to use: new password takes priority, then saved password
+    password_to_use = pdf_password if pdf_password else statement.pdf_password
+    
+    # Save password if requested and provided
+    if save_password and pdf_password:
+        statement.pdf_password = pdf_password
+        db.session.commit()
+        logger.info(f"Saved password for statement {id}")
+    
+    # Log what we're using
+    if password_to_use:
+        logger.info(f"Using password for parsing (length: {len(password_to_use)})")
+    else:
+        logger.warning(f"No password available for statement {id}")
+    
     try:
         service = GmailService(current_app)
+        
+        # ✅ FIX: Temporarily update statement password for parsing
+        old_password = statement.pdf_password
+        statement.pdf_password = password_to_use
+        
+        # Parse the PDF
         transaction_count = service.download_and_parse_pdf(credential, statement)
         
-        flash(f'✅ Extracted {transaction_count} transactions', 'success')
+        # Restore old password if we didn't save the new one
+        if not save_password and pdf_password:
+            statement.pdf_password = old_password
+            db.session.commit()
+        
+        flash(f'✅ Successfully extracted {transaction_count} transactions', 'success')
+        logger.info(f"Successfully parsed {transaction_count} transactions from statement {id}")
+        
+    except ValueError as e:
+        # ✅ FIX: Better error handling for password-related errors
+        error_msg = str(e)
+        if 'password' in error_msg.lower():
+            flash(f'❌ {error_msg}. Please enter the correct PDF password.', 'danger')
+            logger.error(f"Password error for statement {id}: {error_msg}")
+        else:
+            flash(f'❌ Parse failed: {error_msg}', 'danger')
+            logger.error(f"Parse error for statement {id}: {error_msg}")
     except Exception as e:
         flash(f'❌ Parse failed: {str(e)}', 'danger')
-        logger.error(f"PDF parse error: {str(e)}")
+        logger.error(f"Unexpected error parsing statement {id}: {str(e)}", exc_info=True)
     
     return redirect(url_for('gmail.statement_detail', id=id))
 
@@ -236,6 +281,10 @@ def transactions():
     if category_id:
         query = query.filter_by(category_id=category_id)
     
+    statement_id = request.args.get('statement_id', type=int)
+    if statement_id:
+        query = query.filter_by(statement_id=statement_id)
+    
     # Order and paginate
     transactions = query.order_by(
         BankTransaction.date.desc()
@@ -263,7 +312,7 @@ def transaction_detail(id):
 
 
 # ============================================================================
-# CSV Upload Routes (SINGLE DEFINITION - NO DUPLICATES)
+# CSV Upload Routes
 # ============================================================================
 
 @gmail_bp.route('/upload-csv', methods=['GET', 'POST'])
@@ -307,13 +356,13 @@ def upload_csv():
             if create_statement:
                 statement = EmailStatement(
                     user_id=current_user.id,
-                    email_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
+                    gmail_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}",
                     subject=f"CSV Import: {secure_filename(file.filename)}",
                     sender='CSV Upload',
                     received_date=datetime.utcnow(),
                     bank_name='capitec',
                     is_processed=True,
-                    has_attachments=False
+                    has_pdf=False
                 )
                 db.session.add(statement)
                 db.session.flush()
@@ -410,13 +459,13 @@ def bulk_csv_import():
                 # Create statement for this file
                 statement = EmailStatement(
                     user_id=current_user.id,
-                    email_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{files_processed}",
+                    gmail_id=f"CSV-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{files_processed}",
                     subject=f"CSV Import: {secure_filename(file.filename)}",
                     sender='Bulk CSV Upload',
                     received_date=datetime.utcnow(),
                     bank_name='capitec',
                     is_processed=True,
-                    has_attachments=False
+                    has_pdf=False
                 )
                 db.session.add(statement)
                 db.session.flush()
