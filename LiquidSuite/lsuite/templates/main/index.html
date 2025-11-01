@@ -1,155 +1,17 @@
-<!-- ============================================================
-     lsuite/templates/main/index.html - Dashboard
-     ============================================================ -->
-{% extends "base.html" %}
-
-{% block title %}Dashboard - LSuite{% endblock %}
-
-{% block content %}
-<div class="d-flex justify-content-between align-items-center pt-3 pb-2 mb-3 border-bottom">
-    <h1 class="h2">Dashboard</h1>
-</div>
-
-<!-- Statistics Cards -->
-<div class="row mb-4">
-    <div class="col-md-3">
-        <div class="card text-white bg-primary mb-3">
-            <div class="card-body">
-                <h5 class="card-title"><i class="fas fa-envelope"></i> Statements</h5>
-                <p class="card-text display-6">{{ stats.statements }}</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-white bg-success mb-3">
-            <div class="card-body">
-                <h5 class="card-title"><i class="fas fa-exchange-alt"></i> Transactions</h5>
-                <p class="card-text display-6">{{ stats.transactions }}</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-white bg-info mb-3">
-            <div class="card-body">
-                <h5 class="card-title"><i class="fas fa-tags"></i> Categorized</h5>
-                <p class="card-text display-6">{{ stats.categorized }}</p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="card text-white bg-warning mb-3">
-            <div class="card-body">
-                <h5 class="card-title"><i class="fas fa-sync"></i> Synced</h5>
-                <p class="card-text display-6">{{ stats.synced }}</p>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Quick Actions -->
-<div class="card mb-4">
-    <div class="card-header">
-        <h5><i class="fas fa-bolt"></i> Quick Actions</h5>
-    </div>
-    <div class="card-body">
-        <div class="row">
-            <div class="col-md-4 mb-2">
-                <form method="POST" action="{{ url_for('gmail.import_statements') }}">
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-download"></i> Import from Gmail
-                    </button>
-                </form>
-            </div>
-            <div class="col-md-4 mb-2">
-                <form method="POST" action="{{ url_for('bridge.auto_categorize') }}">
-                    <button type="submit" class="btn btn-info w-100">
-                        <i class="fas fa-magic"></i> Auto-Categorize
-                    </button>
-                </form>
-            </div>
-            <div class="col-md-4 mb-2">
-                <form method="POST" action="{{ url_for('bridge.bulk_sync') }}">
-                    <button type="submit" class="btn btn-success w-100" 
-                            {% if not erpnext_config %}disabled{% endif %}>
-                        <i class="fas fa-cloud-upload-alt"></i> Sync to ERPNext
-                    </button>
-                </form>
-            </div>
-        </div>
-        {% if ready_to_sync > 0 %}
-        <div class="alert alert-info mt-3" role="alert">
-            <i class="fas fa-info-circle"></i> 
-            <strong>{{ ready_to_sync }}</strong> transactions are ready to sync to ERPNext
-        </div>
-        {% endif %}
-    </div>
-</div>
-
-<!-- Recent Activity -->
-<div class="row">
-    <div class="col-md-6">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5><i class="fas fa-clock"></i> Recent Statements</h5>
-            </div>
-            <div class="card-body">
-                {% if recent_statements %}
-                <div class="list-group">
-                    {% for statement in recent_statements %}
-                    <a href="{{ url_for('gmail.statement_detail', id=statement.id) }}" 
-                       class="list-group-item list-group-item-action">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h6 class="mb-1">{{ statement.subject[:50] }}...</h6>
-                            <small>{{ statement.date.strftime('%Y-%m-%d') }}</small>
-                        </div>
-                        <small class="text-muted">{{ statement.sender }}</small>
-                        <span class="badge bg-{{ 'success' if statement.state == 'parsed' else 'secondary' }}">
-                            {{ statement.state }}
-                        </span>
-                    </a>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-muted">No statements yet</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-6">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5><i class="fas fa-list"></i> Recent Transactions</h5>
-            </div>
-            <div class="card-body">
-                {% if recent_transactions %}
-                <div class="table-responsive">
-                    <table class="table table-sm">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Description</th>
-                                <th>Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for trans in recent_transactions %}
-                            <tr>
-                                <td>{{ trans.date }}</td>
-                                <td>{{ trans.description[:30] }}...</td>
-                                <td class="text-{{ 'danger' if trans.transaction_type == 'debit' else 'success' }}">
-                                    R{{ "%.2f"|format(trans.amount) }}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-                {% else %}
-                <p class="text-muted">No transactions yet</p>
-                {% endif %}
-            </div>
-        </div>
-    </div>
-</div>
-{% endblock %}
+<!-- LiquidSuite/lsuite/templates/main/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>LSuite Dashboard</title>
+</head>
+<body>
+    <h1>Welcome to LSuite</h1>
+    <p>Statistics:</p>
+    <ul>
+        <li>Statements: {{ stats.statements }}</li>
+        <li>Transactions: {{ stats.transactions }}</li>
+        <li>Categorized: {{ stats.categorized }}</li>
+        <li>Synced: {{ stats.synced }}</li>
+    </ul>
+</body>
+</html>
