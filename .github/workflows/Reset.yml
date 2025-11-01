@@ -32,10 +32,6 @@ jobs:
     # Add environment protection
     environment: ${{ github.event.inputs.environment }}
     
-    defaults:
-      run:
-        working-directory: lsuite
-    
     steps:
       - name: Validate Confirmation
         run: |
@@ -55,6 +51,7 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
+        working-directory: LiquidSuite
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -67,12 +64,12 @@ jobs:
           echo ""
           echo "This will DELETE ALL DATA from the database!"
           echo "Environment: ${{ github.event.inputs.environment }}"
-          echo "Database: ${{ secrets.DATABASE_URL && '***configured***' || '❌ NOT CONFIGURED' }}"
           echo ""
           echo "Proceeding in 5 seconds..."
           sleep 5
       
       - name: Drop All Tables
+        working-directory: LiquidSuite
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
@@ -81,32 +78,9 @@ jobs:
         run: |
           echo "🗑️  Dropping all database tables..."
           echo ""
-          
-          # Create a temporary script to drop tables
-          cat > /tmp/drop_tables.py << 'EOF'
-          import sys
-          sys.path.insert(0, '.')
-          from lsuite import create_app
-          from lsuite.extensions import db
-          
-          app = create_app()
-          with app.app_context():
-              inspector = db.inspect(db.engine)
-              tables_before = inspector.get_table_names()
-              print(f"📊 Tables to drop: {len(tables_before)}")
-              for table in tables_before:
-                  print(f"  - {table}")
-              print()
-              
-              db.drop_all()
-              print("✅ All tables dropped successfully!")
-              
-              tables_after = inspector.get_table_names()
-              print(f"📊 Tables remaining: {len(tables_after)}")
-          EOF
-          
-          python /tmp/drop_tables.py
-          
+          python scripts/init_db.py drop << 'CONFIRM'
+          DELETE ALL DATA
+          CONFIRM
           echo ""
           echo "✅ Database tables dropped successfully!"
       
