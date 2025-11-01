@@ -34,7 +34,7 @@ jobs:
     
     defaults:
       run:
-        working-directory: LiquidSuite
+        working-directory: lsuite
     
     steps:
       - name: Validate Confirmation
