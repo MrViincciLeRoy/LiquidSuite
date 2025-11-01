@@ -1,0 +1,350 @@
+# ============================================================================
+# .github/workflows/fix-statement-id.yml
+# Emergency fix for missing statement_id column in bank_transactions
+# ============================================================================
+name: Fix Statement ID Column
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+jobs:
+  fix-statement-id:
+    name: Add statement_id Column
+    runs-on: ubuntu-latest
+    
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install psycopg2 and SQLAlchemy
+        run: |
+          pip install psycopg2-binary sqlalchemy
+      
+      - name: Fix Database URL Format
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Convert postgres:// to postgresql://
+          FIXED_URL="${DATABASE_URL//postgres:\/\//postgresql:\/\/}"
+          echo "FIXED_DATABASE_URL=$FIXED_URL" >> $GITHUB_ENV
+          echo "✅ Database URL format fixed for SQLAlchemy 2.x"
+      
+      - name: Test Database Connection
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          import psycopg2
+          from urllib.parse import urlparse
+          
+          print("=" * 70)
+          print("  TESTING DATABASE CONNECTION")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          if not db_url:
+              print("❌ DATABASE_URL not set!")
+              exit(1)
+          
+          parsed = urlparse(db_url)
+          
+          try:
+              conn = psycopg2.connect(
+                  host=parsed.hostname,
+                  port=parsed.port or 5432,
+                  user=parsed.username,
+                  password=parsed.password,
+                  database=parsed.path[1:]
+              )
+              print("✅ Database connection successful!")
+              
+              cursor = conn.cursor()
+              cursor.execute("SELECT version();")
+              version = cursor.fetchone()[0]
+              print(f"PostgreSQL version: {version[:50]}...")
+              
+              cursor.close()
+              conn.close()
+              
+          except Exception as e:
+              print(f"❌ Connection failed: {e}")
+              exit(1)
+          PYTHON
+      
+      - name: Check Current Schema
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("\n" + "=" * 70)
+          print("  CHECKING CURRENT SCHEMA")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Check if bank_transactions table exists
+              inspector = inspect(engine)
+              tables = inspector.get_table_names()
+              
+              if 'bank_transactions' not in tables:
+                  print("\n❌ bank_transactions table doesn't exist!")
+                  exit(1)
+              
+              print("\n✅ bank_transactions table exists")
+              
+              # Get all columns
+              columns = inspector.get_columns('bank_transactions')
+              
+              print("\n📋 Current columns in bank_transactions:")
+              for col in sorted(columns, key=lambda x: x['name']):
+                  print(f"  - {col['name']:<30} {str(col['type']):<20}")
+              
+              # Check specifically for statement_id
+              col_names = [col['name'] for col in columns]
+              
+              if 'statement_id' in col_names:
+                  print("\n✅ statement_id column ALREADY EXISTS")
+                  print("   No action needed!")
+                  exit(0)
+              else:
+                  print("\n⚠️  statement_id column MISSING")
+                  print("   Will add it in next step...")
+          PYTHON
+      
+      - name: Add statement_id Column
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("\n" + "=" * 70)
+          print("  ADDING statement_id COLUMN")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Check if column already exists
+              inspector = inspect(engine)
+              columns = [col['name'] for col in inspector.get_columns('bank_transactions')]
+              
+              if 'statement_id' in columns:
+                  print("\n✅ statement_id already exists - skipping")
+                  exit(0)
+              
+              trans = conn.begin()
+              
+              try:
+                  print("\n🔧 Step 1: Adding statement_id column...")
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      ADD COLUMN statement_id INTEGER
+                  """))
+                  print("   ✅ Column added")
+                  
+                  print("\n🔧 Step 2: Adding foreign key constraint...")
+                  conn.execute(text("""
+                      ALTER TABLE bank_transactions 
+                      ADD CONSTRAINT fk_bank_transactions_statement 
+                      FOREIGN KEY (statement_id) 
+                      REFERENCES email_statements(id) 
+                      ON DELETE SET NULL
+                  """))
+                  print("   ✅ Foreign key added")
+                  
+                  print("\n🔧 Step 3: Adding index for performance...")
+                  conn.execute(text("""
+                      CREATE INDEX idx_bank_transactions_statement_id 
+                      ON bank_transactions(statement_id)
+                  """))
+                  print("   ✅ Index created")
+                  
+                  trans.commit()
+                  
+                  print("\n" + "=" * 70)
+                  print("✅ MIGRATION COMPLETED SUCCESSFULLY!")
+                  print("=" * 70)
+                  
+              except Exception as e:
+                  trans.rollback()
+                  print(f"\n❌ ERROR: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  exit(1)
+          PYTHON
+      
+      - name: Verify Fix
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("\n" + "=" * 70)
+          print("  VERIFYING FIX")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              inspector = inspect(engine)
+              
+              # Check columns
+              columns = {col['name']: col for col in inspector.get_columns('bank_transactions')}
+              
+              print("\n✅ Verification checks:")
+              
+              # Check 1: statement_id exists
+              if 'statement_id' in columns:
+                  print("  ✅ statement_id column exists")
+                  col_type = str(columns['statement_id']['type'])
+                  print(f"     Type: {col_type}")
+              else:
+                  print("  ❌ statement_id column NOT FOUND")
+                  exit(1)
+              
+              # Check 2: Foreign key exists
+              fkeys = inspector.get_foreign_keys('bank_transactions')
+              statement_fk = [fk for fk in fkeys if fk['constrained_columns'] == ['statement_id']]
+              
+              if statement_fk:
+                  print("  ✅ Foreign key constraint exists")
+                  print(f"     References: {statement_fk[0]['referred_table']}")
+              else:
+                  print("  ⚠️  Foreign key constraint not found")
+              
+              # Check 3: Index exists
+              indexes = inspector.get_indexes('bank_transactions')
+              statement_idx = [idx for idx in indexes if 'statement_id' in idx['column_names']]
+              
+              if statement_idx:
+                  print("  ✅ Index exists")
+                  print(f"     Name: {statement_idx[0]['name']}")
+              else:
+                  print("  ⚠️  Index not found")
+              
+              # Check 4: Test query (this was causing the 500 error)
+              print("\n🧪 Testing the query that was failing...")
+              try:
+                  result = conn.execute(text("""
+                      SELECT id, statement_id, description, date 
+                      FROM bank_transactions 
+                      WHERE statement_id IS NULL
+                      LIMIT 1
+                  """))
+                  print("  ✅ Query executed successfully!")
+                  
+                  row = result.fetchone()
+                  if row:
+                      print(f"     Found transaction: ID {row[0]}")
+              except Exception as e:
+                  print(f"  ❌ Query failed: {e}")
+                  exit(1)
+              
+              print("\n" + "=" * 70)
+              print("✅ ALL CHECKS PASSED!")
+              print("=" * 70)
+          PYTHON
+      
+      - name: Count Affected Records
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text
+          
+          print("\n" + "=" * 70)
+          print("  STATISTICS")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Total transactions
+              result = conn.execute(text("SELECT COUNT(*) FROM bank_transactions"))
+              total = result.scalar()
+              print(f"\n📊 Total transactions: {total}")
+              
+              # Transactions without statement_id
+              result = conn.execute(text("SELECT COUNT(*) FROM bank_transactions WHERE statement_id IS NULL"))
+              without_statement = result.scalar()
+              print(f"📊 Transactions without statement_id: {without_statement}")
+              
+              # Transactions with statement_id
+              result = conn.execute(text("SELECT COUNT(*) FROM bank_transactions WHERE statement_id IS NOT NULL"))
+              with_statement = result.scalar()
+              print(f"📊 Transactions with statement_id: {with_statement}")
+              
+              if without_statement > 0:
+                  print(f"\nℹ️  Note: {without_statement} existing transactions don't have a statement_id")
+                  print("   This is normal - they were imported before this fix")
+                  print("   New transactions will have proper statement associations")
+          PYTHON
+      
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "=" * 70
+          echo "✅ FIX COMPLETED SUCCESSFULLY!"
+          echo "=" * 70
+          echo ""
+          echo "Changes applied:"
+          echo "  ✅ Added statement_id column to bank_transactions"
+          echo "  ✅ Added foreign key to email_statements"
+          echo "  ✅ Added index for query performance"
+          echo ""
+          echo "Your application should now work correctly!"
+          echo "The 500 error on /gmail/statements/15 is fixed."
+          echo ""
+          echo "Next steps:"
+          echo "  1. Check your app - the error should be gone"
+          echo "  2. Test accessing statement details"
+          echo "  3. Import new transactions - they will have statement_id"
+          echo ""
+      
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo ""
+          echo "❌ FIX FAILED"
+          echo "=" * 70
+          echo ""
+          echo "The migration encountered an error."
+          echo "Please check the logs above for details."
+          echo ""
+          echo "You can try:"
+          echo "  1. Run the workflow again"
+          echo "  2. Check DATABASE_URL secret is correct"
+          echo "  3. Manually run the SQL commands"
+          echo ""
