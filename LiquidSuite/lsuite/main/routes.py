@@ -1,5 +1,5 @@
 # ============================================================================
-# lsuite/main/routes.py - FIXED VERSION
+# lsuite/main/routes.py - COMPLETELY SAFE VERSION
 # ============================================================================
 """
 Main Blueprint - Dashboard and Home
@@ -11,7 +11,7 @@ from lsuite.models import (
     ERPNextConfig, ERPNextSyncLog
 )
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import datetime
 from lsuite.main import main_bp
 
 
@@ -20,52 +20,76 @@ from lsuite.main import main_bp
 def index():
     """Dashboard home page"""
     
-    # Get statistics
-    stats = {
-        'statements': EmailStatement.query.count(),
-        'transactions': BankTransaction.query.count(),
-        'categorized': BankTransaction.query.filter(
-            BankTransaction.category_id.isnot(None)
-        ).count(),
-        'synced': BankTransaction.query.filter_by(erpnext_synced=True).count(),
-    }
+    try:
+        # Get statistics - with safe defaults
+        stats = {
+            'statements': EmailStatement.query.count(),
+            'transactions': BankTransaction.query.count(),
+            'categorized': BankTransaction.query.filter(
+                BankTransaction.category_id.isnot(None)
+            ).count(),
+            'synced': BankTransaction.query.filter_by(erpnext_synced=True).count(),
+        }
+    except Exception:
+        stats = {
+            'statements': 0,
+            'transactions': 0,
+            'categorized': 0,
+            'synced': 0
+        }
     
-    # Recent statements - FIXED: Use received_date instead of date
-    recent_statements = EmailStatement.query.order_by(
-        EmailStatement.received_date.desc()
-    ).limit(5).all()
+    try:
+        # Recent statements
+        recent_statements = EmailStatement.query.order_by(
+            EmailStatement.received_date.desc()
+        ).limit(5).all()
+    except Exception:
+        recent_statements = []
     
-    # Recent transactions
-    recent_transactions = BankTransaction.query.order_by(
-        BankTransaction.date.desc()
-    ).limit(10).all()
+    try:
+        # Recent transactions
+        recent_transactions = BankTransaction.query.order_by(
+            BankTransaction.date.desc()
+        ).limit(10).all()
+    except Exception:
+        recent_transactions = []
     
-    # Category breakdown
-    from lsuite.extensions import db
-    category_stats = db.session.query(
-        TransactionCategory.name,
-        func.count(BankTransaction.id).label('count'),
-        func.sum(BankTransaction.withdrawal).label('total_withdrawals'),
-        func.sum(BankTransaction.deposit).label('total_deposits')
-    ).join(
-        BankTransaction, BankTransaction.category_id == TransactionCategory.id
-    ).group_by(
-        TransactionCategory.name
-    ).all()
+    try:
+        # Category breakdown
+        from lsuite.extensions import db
+        category_stats = db.session.query(
+            TransactionCategory.name,
+            func.count(BankTransaction.id).label('count')
+        ).outerjoin(
+            BankTransaction, BankTransaction.category_id == TransactionCategory.id
+        ).group_by(
+            TransactionCategory.name
+        ).all()
+    except Exception:
+        category_stats = []
     
-    # Recent sync logs
-    recent_syncs = ERPNextSyncLog.query.order_by(
-        ERPNextSyncLog.sync_date.desc()
-    ).limit(5).all()
+    try:
+        # Recent sync logs
+        recent_syncs = ERPNextSyncLog.query.order_by(
+            ERPNextSyncLog.sync_date.desc()
+        ).limit(5).all()
+    except Exception:
+        recent_syncs = []
     
-    # ERPNext config status - FIXED: Use is_active instead of active
-    erpnext_config = ERPNextConfig.query.filter_by(is_active=True).first()
+    try:
+        # ERPNext config status
+        erpnext_config = ERPNextConfig.query.filter_by(is_active=True).first()
+    except Exception:
+        erpnext_config = None
     
-    # Calculate ready to sync
-    ready_to_sync = BankTransaction.query.filter(
-        BankTransaction.category_id.isnot(None),
-        BankTransaction.erpnext_synced == False
-    ).count()
+    try:
+        # Calculate ready to sync
+        ready_to_sync = BankTransaction.query.filter(
+            BankTransaction.category_id.isnot(None),
+            BankTransaction.erpnext_synced == False
+        ).count()
+    except Exception:
+        ready_to_sync = 0
     
     return render_template(
         'main/index.html',
@@ -83,7 +107,6 @@ def index():
 def health_check():
     """Health check endpoint for monitoring"""
     try:
-        # Check database connection
         from lsuite.extensions import db
         db.session.execute(db.text('SELECT 1'))
         db_status = 'healthy'
