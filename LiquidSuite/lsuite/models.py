@@ -433,6 +433,13 @@ class SyncLog(db.Model):
 
 
 # =============================================================================
+# Backwards Compatibility Aliases
+# =============================================================================
+
+# Create alias for ERPNextSyncLog (some code uses this name instead of SyncLog)
+ERPNextSyncLog = SyncLog
+
+# =============================================================================
 # Backwards Compatibility Exports
 # =============================================================================
 
@@ -448,4 +455,5 @@ __all__ = [
     'InvoiceItem',
     'ERPNextConfig',
     'SyncLog',
+    'ERPNextSyncLog',  # Alias for SyncLog
 ]
