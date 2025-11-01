@@ -1,19 +1,24 @@
 # ============================================================================
-# drop-database.yml - Drop All Database Tables (DESTRUCTIVE)
+# initialize-database.yml - Initialize Database Tables
 # ============================================================================
-# WARNING: This workflow will DELETE ALL DATA from the database
-# Use with extreme caution - this action cannot be undone!
+# Creates all database tables and optionally seeds default categories
 # ============================================================================
 
-name: Drop Database Tables
+name: Initialize Database
 
 on:
   workflow_dispatch:
     inputs:
-      confirmation:
-        description: 'Type "DELETE ALL DATA" to confirm'
+      action:
+        description: 'Database initialization action'
         required: true
-        type: string
+        default: 'init-and-seed'
+        type: choice
+        options:
+          - init-only
+          - init-and-seed
+          - seed-only
+          - check-status
       environment:
         description: 'Target environment'
         required: true
@@ -25,23 +30,14 @@ on:
           - development
 
 jobs:
-  drop-tables:
-    name: Drop All Database Tables
+  initialize-database:
+    name: Initialize Database
     runs-on: ubuntu-latest
     
     # Add environment protection
     environment: ${{ github.event.inputs.environment }}
     
     steps:
-      - name: Validate Confirmation
-        run: |
-          if [ "${{ github.event.inputs.confirmation }}" != "DELETE ALL DATA" ]; then
-            echo "❌ ERROR: Confirmation text does not match!"
-            echo "You must type 'DELETE ALL DATA' exactly to proceed."
-            exit 1
-          fi
-          echo "✅ Confirmation validated"
-      
       - name: Checkout code
         uses: actions/checkout@v4
       
@@ -49,6 +45,7 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+          cache: 'pip'
       
       - name: Install dependencies
         working-directory: LiquidSuite
@@ -56,19 +53,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: Show Warning
-        run: |
-          echo "⚠️  =========================================="
-          echo "⚠️  WARNING: DESTRUCTIVE OPERATION"
-          echo "⚠️  =========================================="
-          echo ""
-          echo "This will DELETE ALL DATA from the database!"
-          echo "Environment: ${{ github.event.inputs.environment }}"
-          echo ""
-          echo "Proceeding in 5 seconds..."
-          sleep 5
-      
-      - name: Drop All Tables with CASCADE
+      - name: Initialize Database Tables
+        if: github.event.inputs.action == 'init-only' || github.event.inputs.action == 'init-and-seed'
         working-directory: LiquidSuite
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -76,66 +62,105 @@ jobs:
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
-          echo "🗑️  Dropping all database tables with CASCADE..."
+          echo "📊 Creating database tables..."
           echo ""
           
-          python << 'PYTHON_SCRIPT'
-          import sys
+          # First, check if we need to migrate existing tables
+          python << 'CHECK_MIGRATION'
           import os
-          sys.path.insert(0, '.')
-          from lsuite import create_app
-          from lsuite.extensions import db
-          from sqlalchemy import text
+          from sqlalchemy import text, create_engine
           
-          config_name = os.getenv('FLASK_ENV', 'production')
-          app = create_app(config_name)
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
           
-          with app.app_context():
-              # Get all table names
-              inspector = db.inspect(db.engine)
-              tables = inspector.get_table_names()
+          with engine.connect() as conn:
+              # Check if bank_transactions exists with old schema
+              result = conn.execute(text("""
+                  SELECT column_name 
+                  FROM information_schema.columns 
+                  WHERE table_name = 'bank_transactions' 
+                  AND column_name = 'category'
+              """))
               
-              if not tables:
-                  print("⚠️  No tables found in database.")
-                  sys.exit(0)
-              
-              print(f"📊 Found {len(tables)} tables to drop:")
-              for table in tables:
-                  print(f"  - {table}")
-              
-              print("\n🗑️  Dropping tables with CASCADE...")
-              
-              # Drop each table individually with CASCADE
-              dropped = 0
-              for table in tables:
+              if result.fetchone():
+                  print("⚠️  Old schema detected - migrating...")
+                  trans = conn.begin()
                   try:
-                      print(f"  🗑️  Dropping {table}...", end=" ")
-                      db.session.execute(text(f'DROP TABLE IF EXISTS "{table}" CASCADE'))
-                      db.session.commit()
-                      print("✅")
-                      dropped += 1
+                      # Drop old column
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP COLUMN IF EXISTS category CASCADE
+                      """))
+                      # Add new column
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD COLUMN IF NOT EXISTS category_id INTEGER
+                      """))
+                      # Add FK
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          DROP CONSTRAINT IF EXISTS fk_bank_transactions_category_id
+                      """))
+                      conn.execute(text("""
+                          ALTER TABLE bank_transactions 
+                          ADD CONSTRAINT fk_bank_transactions_category_id 
+                          FOREIGN KEY (category_id) 
+                          REFERENCES transaction_categories(id) 
+                          ON DELETE SET NULL
+                      """))
+                      trans.commit()
+                      print("✅ Schema migrated successfully!")
                   except Exception as e:
-                      print(f"❌ Error: {e}")
-                      db.session.rollback()
-                      continue
-              
-              # Verify all tables are gone
-              inspector = db.inspect(db.engine)
-              remaining = inspector.get_table_names()
-              
-              print(f"\n✅ Successfully dropped {dropped} tables")
-              
-              if remaining:
-                  print(f"⚠️  Warning: {len(remaining)} tables still remain:")
-                  for table in remaining:
-                      print(f"  - {table}")
-                  sys.exit(1)
-              else:
-                  print("✅ All tables successfully removed!")
-          PYTHON_SCRIPT
+                      trans.rollback()
+                      print(f"Migration failed: {e}")
+          CHECK_MIGRATION
           
           echo ""
-          echo "✅ Database tables dropped successfully!"
+          python scripts/init_db.py init
+          echo ""
+          echo "✅ Database initialization complete!"
+      
+      - name: Seed Transaction Categories
+        if: github.event.inputs.action == 'seed-only' || github.event.inputs.action == 'init-and-seed'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🌱 Seeding transaction categories..."
+          echo ""
+          python scripts/seed_categories.py seed
+          echo ""
+          echo "✅ Categories seeded successfully!"
+      
+      - name: Check Database Status
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo ""
+          echo "🔍 Verifying database status..."
+          echo ""
+          python scripts/init_db.py check
+      
+      - name: List Categories
+        if: github.event.inputs.action == 'seed-only' || github.event.inputs.action == 'init-and-seed'
+        working-directory: LiquidSuite
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo ""
+          echo "📋 Transaction Categories:"
+          echo ""
+          python scripts/seed_categories.py list
       
       - name: Summary
         if: success()
@@ -144,14 +169,27 @@ jobs:
           echo "📊 Operation Summary"
           echo "===================="
           echo "Status: ✅ SUCCESS"
-          echo "Action: All tables dropped"
+          echo "Action: ${{ github.event.inputs.action }}"
           echo "Environment: ${{ github.event.inputs.environment }}"
           echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
           echo ""
-          echo "⚠️  The database is now empty!"
-          echo "Next steps:"
-          echo "  1. Run 'Initialize Database' workflow to recreate tables"
-          echo "  2. Run 'Seed Categories' workflow to add default data"
+          
+          case "${{ github.event.inputs.action }}" in
+            init-only)
+              echo "✅ Database tables created"
+              echo "Next step: Run workflow with 'seed-only' to add categories"
+              ;;
+            init-and-seed)
+              echo "✅ Database initialized and seeded"
+              echo "✅ Ready to use!"
+              ;;
+            seed-only)
+              echo "✅ Categories added to database"
+              ;;
+            check-status)
+              echo "✅ Database status checked"
+              ;;
+          esac
       
       - name: Notify on Failure
         if: failure()
@@ -159,6 +197,11 @@ jobs:
           echo ""
           echo "❌ Operation Failed"
           echo "===================="
-          echo "The drop operation encountered an error."
+          echo "The initialization encountered an error."
           echo "Please check the logs above for details."
-          echo "Database state may be inconsistent."
+          echo ""
+          echo "Common issues:"
+          echo "  - Database connection failed"
+          echo "  - Missing DATABASE_URL secret"
+          echo "  - Invalid database credentials"
+          echo "  - Network connectivity issues"
