@@ -1,68 +1,288 @@
+# lsuite/models.py
 """
-Updated LSuite Database Models - Match CSV Format
-Replace the BankTransaction class in lsuite/models.py with this version
+Database models for LiquidSuite
+Maintains backwards compatibility for all imports
 """
-from datetime import datetime
-from werkzeug.security import generate_password_hash, check_password_hash
+
 from flask_login import UserMixin
-from lsuite.extensions import db
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import datetime
+from lsuite import db
 
+# =============================================================================
+# User Models
+# =============================================================================
 
-class BankTransaction(db.Model):
-    """Bank transaction record - matches Capitec CSV format"""
-    __tablename__ = 'bank_transactions'
+class User(UserMixin, db.Model):
+    """User account model"""
+    __tablename__ = 'users'
     
     id = db.Column(db.Integer, primary_key=True)
-    statement_id = db.Column(db.Integer, db.ForeignKey('email_statements.id'), nullable=True)
-    
-    # Core transaction fields matching CSV format
-    transaction_date = db.Column(db.Date, nullable=False, index=True)
-    posting_date = db.Column(db.Date, nullable=True, index=True)
-    description = db.Column(db.Text, nullable=False)
-    debits = db.Column(db.Numeric(15, 2), nullable=True)  # Money out
-    credits = db.Column(db.Numeric(15, 2), nullable=True)  # Money in
-    balance = db.Column(db.Numeric(15, 2), nullable=True)
-    bank_account = db.Column(db.String(200), nullable=True)
-    
-    # Additional fields for processing
-    reference = db.Column(db.String(100))
-    
-    # Category and sync fields
-    category_id = db.Column(db.Integer, db.ForeignKey('transaction_categories.id'))
-    erpnext_synced = db.Column(db.Boolean, default=False)
-    erpnext_journal_entry = db.Column(db.String(100))
-    erpnext_sync_date = db.Column(db.DateTime)
-    erpnext_error = db.Column(db.Text)
-    
-    state = db.Column(db.String(20), default='draft')  # draft, matched, posted
+    username = db.Column(db.String(80), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(120), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    first_name = db.Column(db.String(50))
+    last_name = db.Column(db.String(50))
+    is_active = db.Column(db.Boolean, default=True)
+    is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    bank_accounts = db.relationship('BankAccount', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    transactions = db.relationship('Transaction', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    invoices = db.relationship('Invoice', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    
+    def set_password(self, password):
+        """Hash and set password"""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """Check password against hash"""
+        return check_password_hash(self.password_hash, password)
     
     @property
-    def transaction_type(self):
-        """Determine transaction type from debits/credits"""
-        if self.debits and float(self.debits) > 0:
-            return 'debit'
-        elif self.credits and float(self.credits) > 0:
-            return 'credit'
-        return 'unknown'
+    def full_name(self):
+        """Get full name"""
+        if self.first_name and self.last_name:
+            return f"{self.first_name} {self.last_name}"
+        return self.username
+    
+    def __repr__(self):
+        return f'<User {self.username}>'
+
+
+# =============================================================================
+# Banking Models
+# =============================================================================
+
+class BankAccount(db.Model):
+    """Bank account model"""
+    __tablename__ = 'bank_accounts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    account_name = db.Column(db.String(200), nullable=False)
+    account_number = db.Column(db.String(100))
+    bank_name = db.Column(db.String(100))
+    account_type = db.Column(db.String(50))  # Savings, Checking, etc.
+    currency = db.Column(db.String(3), default='ZAR')
+    balance = db.Column(db.Numeric(15, 2), default=0.00)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    transactions = db.relationship('Transaction', backref='bank_account', lazy='dynamic', cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<BankAccount {self.account_name}>'
+
+
+class Transaction(db.Model):
+    """Bank transaction model"""
+    __tablename__ = 'transactions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    bank_account_id = db.Column(db.Integer, db.ForeignKey('bank_accounts.id'), nullable=False)
+    
+    transaction_date = db.Column(db.Date, nullable=False, index=True)
+    posting_date = db.Column(db.Date)
+    description = db.Column(db.String(500), nullable=False)
+    reference_number = db.Column(db.String(100), index=True)
+    
+    # Amount fields
+    debit = db.Column(db.Numeric(15, 2), default=0.00)
+    credit = db.Column(db.Numeric(15, 2), default=0.00)
+    balance = db.Column(db.Numeric(15, 2))
+    
+    # Categorization
+    category = db.Column(db.String(100))
+    tags = db.Column(db.String(500))  # Comma-separated tags
+    notes = db.Column(db.Text)
+    
+    # Reconciliation
+    is_reconciled = db.Column(db.Boolean, default=False)
+    reconciled_date = db.Column(db.DateTime)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'))
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     @property
     def amount(self):
-        """Get the transaction amount (debits or credits)"""
-        if self.debits and float(self.debits) > 0:
-            return float(self.debits)
-        elif self.credits and float(self.credits) > 0:
-            return float(self.credits)
-        return 0
+        """Get transaction amount (credit - debit)"""
+        return float(self.credit or 0) - float(self.debit or 0)
     
     @property
-    def date(self):
-        """Alias for transaction_date for backward compatibility"""
-        return self.transaction_date
-    
-    @property
-    def is_categorized(self):
-        return self.category_id is not None
+    def transaction_type(self):
+        """Get transaction type"""
+        if self.credit and self.credit > 0:
+            return 'credit'
+        elif self.debit and self.debit > 0:
+            return 'debit'
+        return 'unknown'
     
     def __repr__(self):
-        return f'<BankTransaction {self.transaction_date} {self.description[:30]}>'
+        return f'<Transaction {self.reference_number or self.id}>'
+
+
+# =============================================================================
+# Invoice Models
+# =============================================================================
+
+class Invoice(db.Model):
+    """Invoice model"""
+    __tablename__ = 'invoices'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    # Invoice details
+    invoice_number = db.Column(db.String(100), unique=True, nullable=False, index=True)
+    invoice_date = db.Column(db.Date, nullable=False, index=True)
+    due_date = db.Column(db.Date)
+    
+    # Customer/Supplier
+    customer_name = db.Column(db.String(200), nullable=False)
+    customer_email = db.Column(db.String(120))
+    customer_address = db.Column(db.Text)
+    
+    # Financial details
+    subtotal = db.Column(db.Numeric(15, 2), nullable=False, default=0.00)
+    tax_amount = db.Column(db.Numeric(15, 2), default=0.00)
+    tax_rate = db.Column(db.Numeric(5, 2), default=0.00)
+    discount_amount = db.Column(db.Numeric(15, 2), default=0.00)
+    total_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0.00)
+    paid_amount = db.Column(db.Numeric(15, 2), default=0.00)
+    outstanding_amount = db.Column(db.Numeric(15, 2), default=0.00)
+    
+    currency = db.Column(db.String(3), default='ZAR')
+    
+    # Status
+    status = db.Column(db.String(50), default='draft', index=True)  # draft, sent, paid, overdue, cancelled
+    
+    # Metadata
+    notes = db.Column(db.Text)
+    terms = db.Column(db.Text)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    items = db.relationship('InvoiceItem', backref='invoice', lazy='dynamic', cascade='all, delete-orphan')
+    transactions = db.relationship('Transaction', backref='invoice', lazy='dynamic')
+    
+    @property
+    def is_paid(self):
+        """Check if invoice is fully paid"""
+        return self.outstanding_amount <= 0
+    
+    @property
+    def is_overdue(self):
+        """Check if invoice is overdue"""
+        if self.due_date and self.status not in ['paid', 'cancelled']:
+            return datetime.now().date() > self.due_date
+        return False
+    
+    def calculate_totals(self):
+        """Recalculate invoice totals from items"""
+        self.subtotal = sum(item.total for item in self.items)
+        self.tax_amount = self.subtotal * (self.tax_rate / 100)
+        self.total_amount = self.subtotal + self.tax_amount - self.discount_amount
+        self.outstanding_amount = self.total_amount - self.paid_amount
+    
+    def __repr__(self):
+        return f'<Invoice {self.invoice_number}>'
+
+
+class InvoiceItem(db.Model):
+    """Invoice line item model"""
+    __tablename__ = 'invoice_items'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'), nullable=False)
+    
+    item_code = db.Column(db.String(100))
+    description = db.Column(db.String(500), nullable=False)
+    quantity = db.Column(db.Numeric(10, 2), nullable=False, default=1)
+    unit_price = db.Column(db.Numeric(15, 2), nullable=False)
+    total = db.Column(db.Numeric(15, 2), nullable=False)
+    
+    # Metadata
+    notes = db.Column(db.String(500))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def calculate_total(self):
+        """Calculate line item total"""
+        self.total = self.quantity * self.unit_price
+    
+    def __repr__(self):
+        return f'<InvoiceItem {self.description[:30]}>'
+
+
+# =============================================================================
+# ERPNext Integration Models
+# =============================================================================
+
+class ERPNextConfig(db.Model):
+    """ERPNext configuration model"""
+    __tablename__ = 'erpnext_configs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, unique=True)
+    
+    site_url = db.Column(db.String(255), nullable=False)
+    api_key = db.Column(db.String(255), nullable=False)
+    api_secret = db.Column(db.String(255), nullable=False)
+    
+    is_active = db.Column(db.Boolean, default=True)
+    last_sync = db.Column(db.DateTime)
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<ERPNextConfig {self.site_url}>'
+
+
+class SyncLog(db.Model):
+    """Synchronization log model"""
+    __tablename__ = 'sync_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    sync_type = db.Column(db.String(50), nullable=False)  # transaction, invoice
+    direction = db.Column(db.String(20), nullable=False)  # upload, download
+    status = db.Column(db.String(20), nullable=False)  # success, failed, partial
+    
+    records_processed = db.Column(db.Integer, default=0)
+    records_successful = db.Column(db.Integer, default=0)
+    records_failed = db.Column(db.Integer, default=0)
+    
+    error_message = db.Column(db.Text)
+    sync_data = db.Column(db.JSON)  # Store sync details
+    
+    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
+    
+    def __repr__(self):
+        return f'<SyncLog {self.sync_type} {self.status}>'
+
+
+# =============================================================================
+# Backwards Compatibility Exports
+# =============================================================================
+
+# Ensure all models are exported for backwards compatibility
+__all__ = [
+    'User',
+    'BankAccount',
+    'Transaction',
+    'Invoice',
+    'InvoiceItem',
+    'ERPNextConfig',
+    'SyncLog',
+]
