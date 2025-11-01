@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload CSV - LSuite</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .card-header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .card-header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .card-body {
+            padding: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        
+        .file-input {
+            display: none;
+        }
+        
+        .file-input-label {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            border: 3px dashed #667eea;
+            border-radius: 8px;
+            background: #f8f9ff;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        
+        .file-input-label:hover {
+            background: #eef2ff;
+            border-color: #764ba2;
+        }
+        
+        .file-input-label.has-file {
+            border-color: #10b981;
+            background: #ecfdf5;
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 10px;
+        }
+        
+        .file-info {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .file-info.selected {
+            color: #10b981;
+            font-weight: 600;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 14px 32px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 100%;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+            margin-left: 10px;
+        }
+        
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+        
+        .alert {
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .alert-info {
+            background: #dbeafe;
+            color: #1e40af;
+            border-left: 4px solid #3b82f6;
+        }
+        
+        .info-box {
+            background: #f8f9ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .info-box ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .info-box li {
+            padding: 5px 0;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .info-box li:before {
+            content: "✓ ";
+            color: #10b981;
+            font-weight: bold;
+            margin-right: 8px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        
+        .back-link {
+            color: white;
+            text-decoration: none;
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        
+        .back-link:hover {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <a href="/gmail/transactions" class="back-link">← Back to Transactions</a>
+                <h1>📊 Upload CSV Transactions</h1>
+                <p>Import bank transactions from CSV file</p>
+            </div>
+            
+            <div class="card-body">
+                <div class="info-box">
+                    <h3>📝 CSV Format Required</h3>
+                    <ul>
+                        <li>Transaction Date (YYYY/MM/DD)</li>
+                        <li>Posting Date (YYYY/MM/DD)</li>
+                        <li>Description</li>
+                        <li>Debits (money out)</li>
+                        <li>Credits (money in)</li>
+                        <li>Balance</li>
+                        <li>Bank account</li>
+                    </ul>
+                    <p style="margin-top: 15px; color: #667eea;">
+                        <a href="/gmail/download-csv-template" style="color: #667eea; font-weight: 600;">
+                            📥 Download CSV Template
+                        </a>
+                    </p>
+                </div>
+                
+                <form method="POST" enctype="multipart/form-data" id="uploadForm">
+                    <div class="form-group">
+                        <label for="csv_file">Select CSV File</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" 
+                                   id="csv_file" 
+                                   name="csv_file" 
+                                   class="file-input" 
+                                   accept=".csv"
+                                   required>
+                            <label for="csv_file" class="file-input-label" id="fileLabel">
+                                <div>
+                                    <div class="upload-icon">📁</div>
+                                    <div>
+                                        <strong>Click to select CSV file</strong>
+                                        <div class="file-info" id="fileInfo">or drag and drop here</div>
+                                    </div>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="bank_account">Bank Account (optional)</label>
+                        <input type="text" 
+                               id="bank_account" 
+                               name="bank_account" 
+                               placeholder="e.g., 5443 - Capitec Savings Account">
+                        <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                            Leave blank if your CSV already includes bank account information
+                        </small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" 
+                                   id="create_statement" 
+                                   name="create_statement"
+                                   checked>
+                            <label for="create_statement" style="margin: 0; font-weight: normal;">
+                                Create email statement record for this import
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary">
+                        📤 Upload and Import
+                    </button>
+                </form>
+                
+                <div class="button-group">
+                    <a href="/gmail/bulk-csv-import" class="btn btn-secondary" style="width: 100%; text-align: center;">
+                        📚 Bulk Import Multiple CSVs
+                    </a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="alert alert-info">
+            <span>💡</span>
+            <div>
+                <strong>Tip:</strong> Duplicate transactions (same date, description, and amount) will be automatically skipped to prevent duplicates.
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const fileInput = document.getElementById('csv_file');
+        const fileLabel = document.getElementById('fileLabel');
+        const fileInfo = document.getElementById('fileInfo');
+        const uploadForm = document.getElementById('uploadForm');
+        
+        fileInput.addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                const fileName = e.target.files[0].name;
+                const fileSize = (e.target.files[0].size / 1024).toFixed(2);
+                fileLabel.classList.add('has-file');
+                fileInfo.textContent = `${fileName} (${fileSize} KB)`;
+                fileInfo.classList.add('selected');
+            } else {
+                fileLabel.classList.remove('has-file');
+                fileInfo.textContent = 'or drag and drop here';
+                fileInfo.classList.remove('selected');
+            }
+        });
+        
+        // Drag and drop support
+        fileLabel.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileLabel.style.borderColor = '#764ba2';
+            fileLabel.style.background = '#eef2ff';
+        });
+        
+        fileLabel.addEventListener('dragleave', () => {
+            fileLabel.style.borderColor = '#667eea';
+            fileLabel.style.background = '#f8f9ff';
+        });
+        
+        fileLabel.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileLabel.style.borderColor = '#667eea';
+            fileLabel.style.background = '#f8f9ff';
+            
+            if (e.dataTransfer.files.length > 0) {
+                fileInput.files = e.dataTransfer.files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
+        
+        // Form submission
+        uploadForm.addEventListener('submit', function(e) {
+            const submitBtn = this.querySelector('button[type="submit"]');
+            submitBtn.textContent = '⏳ Uploading...';
+            submitBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>
