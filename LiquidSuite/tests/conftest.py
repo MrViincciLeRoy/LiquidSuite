@@ -1,5 +1,5 @@
 # ============================================================================
-# tests/conftest.py
+# LiquidSuite/tests/conftest.py - FIXED VERSION
 # ============================================================================
 """
 Pytest Configuration and Fixtures
@@ -66,19 +66,25 @@ def user(app):
 
 
 @pytest.fixture(scope='function')
-def auth_client(client, user):
+def auth_client(client, app, user):
     """Create an authenticated test client."""
-    # Log in the user
-    client.post('/auth/login', data={
-        'email': user.email,
-        'password': 'testpassword',
-        'remember_me': False
-    }, follow_redirects=True)
+    # FIXED: Use app context and pass user fixture
+    with app.app_context():
+        # Log in the user using the client
+        response = client.post('/auth/login', data={
+            'email': user.email,
+            'password': 'testpassword',
+            'remember_me': False
+        }, follow_redirects=True)
+        
+        # Verify login was successful
+        assert response.status_code == 200
     
     yield client
     
     # Logout after test
-    client.get('/auth/logout', follow_redirects=True)
+    with app.app_context():
+        client.get('/auth/logout', follow_redirects=True)
 
 
 @pytest.fixture(scope='function')
@@ -90,19 +96,22 @@ def sample_categories(app):
                 name='Test Transport',
                 erpnext_account='Transport - Test',
                 transaction_type='expense',
-                keywords='uber,taxi,bolt,ride,transport'
+                keywords='uber,taxi,bolt,ride,transport',
+                active=True
             ),
             TransactionCategory(
                 name='Test Food',
                 erpnext_account='Food & Dining - Test',
                 transaction_type='expense',
-                keywords='restaurant,food,lunch,dinner,meal,eat'
+                keywords='restaurant,food,lunch,dinner,meal,eat',
+                active=True
             ),
             TransactionCategory(
                 name='Test Income',
                 erpnext_account='Income - Test',
                 transaction_type='income',
-                keywords='payment received,salary,income,revenue,client'
+                keywords='payment received,salary,income,revenue,client',
+                active=True
             )
         ]
         
