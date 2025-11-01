@@ -45,7 +45,6 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
       
-      # ✅ FIX: Install psycopg2-binary FIRST, before other dependencies
       - name: Install PostgreSQL driver
         working-directory: LiquidSuite
         run: |
@@ -61,9 +60,20 @@ jobs:
         run: |
           python -c "import psycopg2; print(f'✅ psycopg2 version: {psycopg2.__version__}')"
       
-      - name: Test database connection
+      # ✅ FIX: Convert postgres:// to postgresql:// for SQLAlchemy 2.x
+      - name: Fix database URL format
+        id: fix_db_url
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Convert postgres:// to postgresql://
+          FIXED_URL="${DATABASE_URL//postgres:\/\//postgresql:\/\/}"
+          echo "FIXED_DATABASE_URL=$FIXED_URL" >> $GITHUB_ENV
+          echo "✅ Database URL format fixed for SQLAlchemy 2.x"
+      
+      - name: Test database connection
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
         run: |
           python << 'PYTHON'
           import os
@@ -75,7 +85,13 @@ jobs:
               print("❌ DATABASE_URL not set!")
               exit(1)
           
-          # Parse connection string
+          # Verify it uses postgresql://
+          if not db_url.startswith('postgresql://'):
+              print(f"⚠️  URL should start with postgresql://, got: {db_url.split('://')[0]}://")
+              if db_url.startswith('postgres://'):
+                  print("Converting postgres:// to postgresql://...")
+                  db_url = db_url.replace('postgres://', 'postgresql://', 1)
+          
           parsed = urlparse(db_url)
           
           try:
@@ -84,7 +100,7 @@ jobs:
                   port=parsed.port or 5432,
                   user=parsed.username,
                   password=parsed.password,
-                  database=parsed.path[1:]  # Remove leading /
+                  database=parsed.path[1:]
               )
               print("✅ Database connection successful!")
               
@@ -105,8 +121,8 @@ jobs:
         if: github.event.inputs.action == 'drop-and-recreate'
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
@@ -117,7 +133,10 @@ jobs:
           import os
           from sqlalchemy import create_engine, text
           
-          engine = create_engine(os.getenv('DATABASE_URL'))
+          db_url = os.getenv('DATABASE_URL')
+          print(f"Using database URL: {db_url.split('@')[0]}@...")
+          
+          engine = create_engine(db_url)
           
           with engine.connect() as conn:
               trans = conn.begin()
@@ -149,8 +168,8 @@ jobs:
         if: github.event.inputs.action != 'drop-and-recreate' && github.event.inputs.action != 'check-status'
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
@@ -167,16 +186,14 @@ jobs:
           with engine.connect() as conn:
               trans = conn.begin()
               try:
-                  # Check if tables exist
                   inspector = inspect(engine)
                   tables = inspector.get_table_names()
                   
                   if 'bank_transactions' not in tables:
-                      print("ℹ️  bank_transactions table doesn't exist yet - will be created")
+                      print("ℹ️  bank_transactions table doesn't exist yet")
                       trans.commit()
                       exit(0)
                   
-                  # Check schema
                   result = conn.execute(text("""
                       SELECT column_name, data_type
                       FROM information_schema.columns 
@@ -187,32 +204,29 @@ jobs:
                   """))
                   
                   columns = {row[0]: row[1] for row in result}
-                  print("Current columns in bank_transactions:")
+                  print("Current columns:")
                   for col, dtype in columns.items():
                       print(f"  - {col}: {dtype}")
                   
                   needs_migration = False
                   
-                  # Check for old schema issues
                   if 'category' in columns and 'category_id' not in columns:
-                      print("\n⚠️  Issue 1: Old 'category' column found (should be 'category_id')")
+                      print("\n⚠️  Fixing: category → category_id")
                       needs_migration = True
                   
                   if 'debits' in columns or 'credits' in columns:
                       if 'deposit' not in columns or 'withdrawal' not in columns:
-                          print("\n⚠️  Issue 2: Using debits/credits (should be deposit/withdrawal)")
+                          print("\n⚠️  Fixing: debits/credits → withdrawal/deposit")
                           needs_migration = True
                   
                   if 'transaction_date' in columns and 'date' not in columns:
-                      print("\n⚠️  Issue 3: Using transaction_date (should be date)")
+                      print("\n⚠️  Fixing: transaction_date → date")
                       needs_migration = True
                   
                   if needs_migration:
-                      print("\n🔧 Applying schema fixes...")
+                      print("\n🔧 Applying fixes...")
                       
-                      # Fix 1: category → category_id
                       if 'category' in columns:
-                          print("  Fixing: category → category_id")
                           conn.execute(text("ALTER TABLE bank_transactions DROP COLUMN category CASCADE"))
                           conn.execute(text("ALTER TABLE bank_transactions ADD COLUMN category_id INTEGER"))
                           conn.execute(text("""
@@ -222,28 +236,22 @@ jobs:
                               ON DELETE SET NULL
                           """))
                       
-                      # Fix 2: debits/credits → withdrawal/deposit
                       if 'debits' in columns and 'deposit' not in columns:
-                          print("  Fixing: debits → withdrawal, credits → deposit")
                           conn.execute(text("ALTER TABLE bank_transactions RENAME COLUMN debits TO withdrawal"))
                           conn.execute(text("ALTER TABLE bank_transactions RENAME COLUMN credits TO deposit"))
                       
-                      # Fix 3: transaction_date → date
                       if 'transaction_date' in columns and 'date' not in columns:
-                          print("  Fixing: transaction_date → date")
                           conn.execute(text("ALTER TABLE bank_transactions RENAME COLUMN transaction_date TO date"))
                       
                       trans.commit()
-                      print("\n✅ Schema fixes applied!")
+                      print("\n✅ Schema fixed!")
                   else:
                       trans.commit()
-                      print("\n✅ Schema is already correct!")
+                      print("\n✅ Schema correct!")
                   
               except Exception as e:
                   trans.rollback()
                   print(f"\n❌ Error: {e}")
-                  import traceback
-                  traceback.print_exc()
                   raise
           PYTHON
       
@@ -254,13 +262,13 @@ jobs:
           github.event.inputs.action == 'drop-and-recreate'
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
           echo ""
-          echo "📊 Creating/updating database tables..."
+          echo "📊 Creating database tables..."
           echo ""
           python scripts/init_db.py init
           echo ""
@@ -273,8 +281,8 @@ jobs:
           github.event.inputs.action == 'drop-and-recreate'
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
@@ -283,44 +291,43 @@ jobs:
           echo ""
           python scripts/seed_categories.py seed
           echo ""
-          echo "✅ Categories seeded successfully!"
+          echo "✅ Categories seeded!"
       
       - name: Check Database Status
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
           echo ""
-          echo "🔍 Verifying database status..."
+          echo "🔍 Verifying database..."
           echo ""
           python scripts/init_db.py check
       
-      - name: Verify schema correctness
+      - name: Verify schema
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
         run: |
           echo ""
-          echo "✅ Final schema verification..."
+          echo "✅ Final verification..."
           echo ""
           
           python << 'PYTHON'
           import os
-          from sqlalchemy import create_engine, text, inspect
+          from sqlalchemy import create_engine, inspect
           
           engine = create_engine(os.getenv('DATABASE_URL'))
           inspector = inspect(engine)
           
-          # Check bank_transactions columns
           columns = {col['name']: col['type'] for col in inspector.get_columns('bank_transactions')}
           
           expected = ['date', 'posting_date', 'description', 'deposit', 'withdrawal', 
-                      'balance', 'category_id', 'reference_number', 'user_id']
+                      'balance', 'category_id', 'reference_number']
           
-          print("Expected columns in bank_transactions:")
+          print("Required columns:")
           missing = []
           for col in expected:
               if col in columns:
@@ -330,9 +337,9 @@ jobs:
                   missing.append(col)
           
           if missing:
-              print(f"\n⚠️  Missing columns: {', '.join(missing)}")
+              print(f"\n⚠️  Missing: {', '.join(missing)}")
           else:
-              print("\n✅ All required columns present!")
+              print("\n✅ All columns present!")
           PYTHON
       
       - name: List Categories
@@ -342,13 +349,13 @@ jobs:
           github.event.inputs.action == 'drop-and-recreate'
         working-directory: LiquidSuite
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ env.FIXED_DATABASE_URL }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
           FLASK_ENV: ${{ github.event.inputs.environment }}
         run: |
           echo ""
-          echo "📋 Transaction Categories:"
+          echo "📋 Categories:"
           echo ""
           python scripts/seed_categories.py list
       
@@ -356,46 +363,20 @@ jobs:
         if: success()
         run: |
           echo ""
-          echo "📊 Operation Summary"
-          echo "===================="
-          echo "Status: ✅ SUCCESS"
+          echo "✅ SUCCESS!"
+          echo "=========="
           echo "Action: ${{ github.event.inputs.action }}"
           echo "Environment: ${{ github.event.inputs.environment }}"
-          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
           echo ""
           
           case "${{ github.event.inputs.action }}" in
             init-only)
-              echo "✅ Database tables created"
-              echo "Next: Run with 'seed-only' to add categories"
+              echo "✅ Tables created"
               ;;
             init-and-seed)
-              echo "✅ Database initialized and seeded"
-              echo "✅ Ready to use!"
-              ;;
-            seed-only)
-              echo "✅ Categories added"
-              ;;
-            check-status)
-              echo "✅ Database status checked"
+              echo "✅ Database ready!"
               ;;
             drop-and-recreate)
-              echo "✅ Database dropped and recreated"
-              echo "✅ Fresh database ready!"
+              echo "✅ Fresh database!"
               ;;
           esac
-      
-      - name: Notify on Failure
-        if: failure()
-        run: |
-          echo ""
-          echo "❌ Operation Failed"
-          echo "===================="
-          echo ""
-          echo "Common issues:"
-          echo "  1. Missing psycopg2-binary"
-          echo "  2. DATABASE_URL not set or invalid"
-          echo "  3. Database connection failed"
-          echo "  4. Schema conflicts"
-          echo ""
-          echo "Check logs above for details."
