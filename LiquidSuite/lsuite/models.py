@@ -31,7 +31,9 @@ class User(UserMixin, db.Model):
     # Relationships
     bank_accounts = db.relationship('BankAccount', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     transactions = db.relationship('Transaction', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    bank_transactions = db.relationship('BankTransaction', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     invoices = db.relationship('Invoice', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    email_statements = db.relationship('EmailStatement', backref='user', lazy='dynamic', cascade='all, delete-orphan')
     
     def set_password(self, password):
         """Hash and set password"""
@@ -74,13 +76,14 @@ class BankAccount(db.Model):
     
     # Relationships
     transactions = db.relationship('Transaction', backref='bank_account', lazy='dynamic', cascade='all, delete-orphan')
+    bank_transactions = db.relationship('BankTransaction', backref='bank_account', lazy='dynamic', cascade='all, delete-orphan')
     
     def __repr__(self):
         return f'<BankAccount {self.account_name}>'
 
 
 class Transaction(db.Model):
-    """Bank transaction model"""
+    """Bank transaction model (legacy)"""
     __tablename__ = 'transactions'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -129,6 +132,157 @@ class Transaction(db.Model):
         return f'<Transaction {self.reference_number or self.id}>'
 
 
+class BankTransaction(db.Model):
+    """Bank transaction model for ERPNext integration"""
+    __tablename__ = 'bank_transactions'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    bank_account_id = db.Column(db.Integer, db.ForeignKey('bank_accounts.id'), nullable=False)
+    
+    # Transaction details
+    date = db.Column(db.Date, nullable=False, index=True)
+    posting_date = db.Column(db.Date, index=True)
+    description = db.Column(db.String(500), nullable=False)
+    reference_number = db.Column(db.String(100), index=True)
+    
+    # Amounts
+    deposit = db.Column(db.Numeric(15, 2), default=0.00)  # Credits
+    withdrawal = db.Column(db.Numeric(15, 2), default=0.00)  # Debits
+    balance = db.Column(db.Numeric(15, 2))
+    
+    # Additional fields
+    currency = db.Column(db.String(3), default='ZAR')
+    unallocated_amount = db.Column(db.Numeric(15, 2))
+    
+    # Categorization
+    category = db.Column(db.String(100))
+    tags = db.Column(db.String(500))
+    notes = db.Column(db.Text)
+    
+    # Reconciliation
+    is_reconciled = db.Column(db.Boolean, default=False)
+    reconciled_date = db.Column(db.DateTime)
+    invoice_id = db.Column(db.Integer, db.ForeignKey('invoices.id'))
+    
+    # ERPNext integration
+    erpnext_id = db.Column(db.String(100), index=True)
+    erpnext_synced = db.Column(db.Boolean, default=False)
+    erpnext_sync_date = db.Column(db.DateTime)
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    @property
+    def amount(self):
+        """Get transaction amount"""
+        return float(self.deposit or 0) - float(self.withdrawal or 0)
+    
+    @property
+    def transaction_type(self):
+        """Get transaction type"""
+        if self.deposit and self.deposit > 0:
+            return 'deposit'
+        elif self.withdrawal and self.withdrawal > 0:
+            return 'withdrawal'
+        return 'unknown'
+    
+    def to_erpnext_format(self):
+        """Convert to ERPNext format"""
+        return {
+            "date": self.date.strftime('%Y-%m-%d') if self.date else None,
+            "posting_date": self.posting_date.strftime('%Y-%m-%d') if self.posting_date else None,
+            "description": self.description,
+            "deposit": float(self.deposit or 0),
+            "withdrawal": float(self.withdrawal or 0),
+            "currency": self.currency,
+            "bank_account": self.bank_account.account_name if self.bank_account else None,
+            "reference_number": self.reference_number,
+            "unallocated_amount": float(self.unallocated_amount or 0)
+        }
+    
+    def __repr__(self):
+        return f'<BankTransaction {self.reference_number or self.id}>'
+
+
+# =============================================================================
+# Email Statement Models
+# =============================================================================
+
+class EmailStatement(db.Model):
+    """Email statement model for Gmail integration"""
+    __tablename__ = 'email_statements'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    # Email details
+    email_id = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    thread_id = db.Column(db.String(255), index=True)
+    subject = db.Column(db.String(500))
+    sender = db.Column(db.String(255))
+    received_date = db.Column(db.DateTime, index=True)
+    
+    # Statement details
+    statement_date = db.Column(db.Date, index=True)
+    bank_name = db.Column(db.String(100))
+    account_number = db.Column(db.String(100))
+    
+    # Attachment info
+    has_attachments = db.Column(db.Boolean, default=False)
+    attachment_count = db.Column(db.Integer, default=0)
+    attachment_names = db.Column(db.Text)  # JSON list of filenames
+    
+    # Processing status
+    is_processed = db.Column(db.Boolean, default=False)
+    processed_date = db.Column(db.DateTime)
+    transactions_extracted = db.Column(db.Integer, default=0)
+    
+    # Content
+    body_text = db.Column(db.Text)
+    body_html = db.Column(db.Text)
+    
+    # Errors
+    error_message = db.Column(db.Text)
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    attachments = db.relationship('EmailAttachment', backref='email_statement', lazy='dynamic', cascade='all, delete-orphan')
+    
+    def __repr__(self):
+        return f'<EmailStatement {self.email_id}>'
+
+
+class EmailAttachment(db.Model):
+    """Email attachment model"""
+    __tablename__ = 'email_attachments'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    email_statement_id = db.Column(db.Integer, db.ForeignKey('email_statements.id'), nullable=False)
+    
+    filename = db.Column(db.String(255), nullable=False)
+    content_type = db.Column(db.String(100))
+    size = db.Column(db.Integer)  # Size in bytes
+    
+    # File storage
+    file_path = db.Column(db.String(500))  # Path to stored file
+    file_data = db.Column(db.LargeBinary)  # Binary data if stored in DB
+    
+    # Processing
+    is_processed = db.Column(db.Boolean, default=False)
+    processed_date = db.Column(db.DateTime)
+    
+    # Metadata
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<EmailAttachment {self.filename}>'
+
+
 # =============================================================================
 # Invoice Models
 # =============================================================================
@@ -164,6 +318,11 @@ class Invoice(db.Model):
     # Status
     status = db.Column(db.String(50), default='draft', index=True)  # draft, sent, paid, overdue, cancelled
     
+    # ERPNext integration
+    erpnext_id = db.Column(db.String(100), index=True)
+    erpnext_synced = db.Column(db.Boolean, default=False)
+    erpnext_sync_date = db.Column(db.DateTime)
+    
     # Metadata
     notes = db.Column(db.Text)
     terms = db.Column(db.Text)
@@ -173,6 +332,7 @@ class Invoice(db.Model):
     # Relationships
     items = db.relationship('InvoiceItem', backref='invoice', lazy='dynamic', cascade='all, delete-orphan')
     transactions = db.relationship('Transaction', backref='invoice', lazy='dynamic')
+    bank_transactions = db.relationship('BankTransaction', backref='invoice', lazy='dynamic')
     
     @property
     def is_paid(self):
@@ -281,6 +441,9 @@ __all__ = [
     'User',
     'BankAccount',
     'Transaction',
+    'BankTransaction',
+    'EmailStatement',
+    'EmailAttachment',
     'Invoice',
     'InvoiceItem',
     'ERPNextConfig',
