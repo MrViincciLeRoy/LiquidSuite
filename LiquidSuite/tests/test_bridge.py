@@ -27,36 +27,17 @@ def sample_transactions(app, sample_categories):
         db.session.commit()
         
         # Create transactions
-        transactions = [
-            BankTransaction(
-                statement_id=statement.id,
-                date=date.today(),
-                description='Uber ride to office',
-                amount=50.00,
-                transaction_type='debit'
-            ),
-            BankTransaction(
-                statement_id=statement.id,
-                date=date.today(),
-                description='Restaurant lunch payment',
-                amount=120.00,
-                transaction_type='debit'
-            ),
-            BankTransaction(
-                statement_id=statement.id,
-                date=date.today(),
-                description='Payment received from client',
-                amount=5000.00,
-                transaction_type='credit'
-            ),
-            BankTransaction(
-                statement_id=statement.id,
-                date=date.today(),
-                description='Random transaction',
-                amount=75.00,
-                transaction_type='debit'
-            )
-        ]
+        transaction = BankTransaction(
+        user_id=current_user.id if hasattr(current_user, 'id') else 1,
+        statement_id=statement.id,
+        date=date.today(),
+        description='Uber ride to office',
+        withdrawal=50.00,  # For debit transactions
+        deposit=0.00,
+        balance=500.00
+        )
+
+
         
         for trans in transactions:
             db.session.add(trans)
