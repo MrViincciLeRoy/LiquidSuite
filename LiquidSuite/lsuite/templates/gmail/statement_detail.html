@@ -70,11 +70,22 @@
     </div>
     <div class="card-footer">
         {% if not statement.has_pdf or statement.transaction_count == 0 %}
-        <form method="POST" action="{{ url_for('gmail.parse_statement', id=statement.id) }}">
-    <input type="hidden" name="pdf_password" value="{{ statement.pdf_password or '' }}">
-    <button type="submit" class="btn btn-primary">
-        <i class="fas fa-file-pdf"></i> Parse PDF
-    </button>
+        <form method="POST" action="{{ url_for('gmail.parse_statement', id=statement.id) }}" class="d-inline">
+            {% if statement.bank_name in ['tymebank'] %}
+                <div class="input-group" style="max-width: 400px; display: inline-flex;">
+                    <input type="password" 
+                           class="form-control form-control-sm" 
+                           name="pdf_password" 
+                           placeholder="PDF password (if protected)">
+                    <button type="submit" class="btn btn-primary btn-sm" data-loading="Parsing...">
+                        <i class="fas fa-file-pdf"></i> Download & Parse PDF
+                    </button>
+                </div>
+            {% else %}
+                <button type="submit" class="btn btn-primary btn-sm" data-loading="Parsing...">
+                    <i class="fas fa-file-pdf"></i> Download & Parse PDF
+                </button>
+            {% endif %}
         </form>
         {% endif %}
         
