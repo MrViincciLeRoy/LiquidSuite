@@ -1,0 +1,170 @@
+# ============================================================================
+# .github/workflows/migrate-schema.yml
+# Run this workflow to fix your production database
+# ============================================================================
+name: Migrate Database Schema
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate-schema:
+    name: Migrate Schema
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install psycopg2
+        run: |
+          pip install psycopg2-binary sqlalchemy
+      
+      - name: Fix Database URL
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          FIXED_URL="${DATABASE_URL//postgres:\/\//postgresql:\/\/}"
+          echo "FIXED_DATABASE_URL=$FIXED_URL" >> $GITHUB_ENV
+      
+      - name: Migrate EmailStatement Schema
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'ENDPYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("=" * 70)
+          print("  MIGRATING EMAIL_STATEMENTS TABLE")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              # Check if table exists
+              inspector = inspect(engine)
+              if 'email_statements' not in inspector.get_table_names():
+                  print("\n❌ Table doesn't exist. Creating it first...")
+                  from sqlalchemy import text
+                  conn.execute(text("""
+                      CREATE TABLE IF NOT EXISTS email_statements (
+                          id SERIAL PRIMARY KEY,
+                          user_id INTEGER NOT NULL,
+                          gmail_id VARCHAR(255) UNIQUE NOT NULL,
+                          thread_id VARCHAR(255),
+                          subject VARCHAR(500),
+                          sender VARCHAR(255),
+                          received_date TIMESTAMP,
+                          statement_date DATE,
+                          bank_name VARCHAR(100),
+                          account_number VARCHAR(100),
+                          has_pdf BOOLEAN DEFAULT FALSE,
+                          pdf_password VARCHAR(100),
+                          state VARCHAR(50) DEFAULT 'new',
+                          is_processed BOOLEAN DEFAULT FALSE,
+                          processed_date TIMESTAMP,
+                          transaction_count INTEGER DEFAULT 0,
+                          body_text TEXT,
+                          body_html TEXT,
+                          error_message TEXT,
+                          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                      )
+                  """))
+                  conn.commit()
+                  print("✅ Table created!")
+                  exit(0)
+              
+              # Get current columns
+              columns = {col['name'] for col in inspector.get_columns('email_statements')}
+              print(f"\n📋 Current columns: {sorted(columns)}")
+              
+              trans = conn.begin()
+              try:
+                  # Migration 1: email_id → gmail_id
+                  if 'email_id' in columns and 'gmail_id' not in columns:
+                      print("\n🔧 Migration 1: Renaming email_id → gmail_id")
+                      conn.execute(text("ALTER TABLE email_statements RENAME COLUMN email_id TO gmail_id"))
+                      print("   ✅ Done")
+                  elif 'gmail_id' in columns:
+                      print("\n✅ Migration 1: gmail_id already exists (SKIP)")
+                  else:
+                      print("\n⚠️  Migration 1: Creating gmail_id column")
+                      conn.execute(text("ALTER TABLE email_statements ADD COLUMN gmail_id VARCHAR(255)"))
+                  
+                  # Migration 2: date → received_date
+                  if 'date' in columns and 'received_date' not in columns:
+                      print("\n🔧 Migration 2: Renaming date → received_date")
+                      conn.execute(text("ALTER TABLE email_statements RENAME COLUMN date TO received_date"))
+                      print("   ✅ Done")
+                  elif 'received_date' in columns:
+                      print("\n✅ Migration 2: received_date already exists (SKIP)")
+                  
+                  # Migration 3: Add missing columns
+                  print("\n🔧 Migration 3: Adding missing columns")
+                  
+                  if 'has_pdf' not in columns:
+                      conn.execute(text("ALTER TABLE email_statements ADD COLUMN has_pdf BOOLEAN DEFAULT FALSE"))
+                      print("   ✅ Added has_pdf")
+                  
+                  if 'pdf_password' not in columns:
+                      conn.execute(text("ALTER TABLE email_statements ADD COLUMN pdf_password VARCHAR(100)"))
+                      print("   ✅ Added pdf_password")
+                  
+                  if 'state' not in columns:
+                      conn.execute(text("ALTER TABLE email_statements ADD COLUMN state VARCHAR(50) DEFAULT 'new'"))
+                      print("   ✅ Added state")
+                  
+                  if 'transaction_count' not in columns:
+                      conn.execute(text("ALTER TABLE email_statements ADD COLUMN transaction_count INTEGER DEFAULT 0"))
+                      print("   ✅ Added transaction_count")
+                  
+                  trans.commit()
+                  print("\n" + "=" * 70)
+                  print("✅ ALL MIGRATIONS COMPLETED SUCCESSFULLY!")
+                  print("=" * 70)
+                  
+                  # Verify
+                  inspector = inspect(engine)
+                  final_columns = {col['name'] for col in inspector.get_columns('email_statements')}
+                  print(f"\n📋 Final columns: {sorted(final_columns)}")
+                  
+                  required = ['gmail_id', 'received_date', 'has_pdf', 'state', 'transaction_count']
+                  missing = [c for c in required if c not in final_columns]
+                  
+                  if missing:
+                      print(f"\n⚠️  Still missing: {missing}")
+                      exit(1)
+                  else:
+                      print("\n✅ All required columns present!")
+                      
+              except Exception as e:
+                  trans.rollback()
+                  print(f"\n❌ ERROR: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  exit(1)
+          ENDPYTHON
+      
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "=" * 70
+          echo "✅ DATABASE MIGRATION COMPLETE!"
+          echo "=" * 70
+          echo ""
+          echo "Your database schema has been updated:"
+          echo "  ✅ email_id → gmail_id"
+          echo "  ✅ date → received_date"
+          echo "  ✅ Added: has_pdf, pdf_password, state, transaction_count"
+          echo ""
+          echo "Next: Your app should now work correctly!"
+          echo ""
