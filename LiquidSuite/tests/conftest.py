@@ -121,6 +121,7 @@ def sample_categories(app):
         db.session.commit()
         
         yield categories
+        
 
 
 @pytest.fixture(scope='function')
@@ -133,3 +134,124 @@ def reset_db(app):
     with app.app_context():
         db.session.remove()
         db.drop_all()
+# ============================================================================
+# ADD THESE FIXTURES TO THE END OF YOUR EXISTING conftest.py
+# DO NOT REPLACE - JUST ADD TO THE BOTTOM
+# ============================================================================
+
+from lsuite.models import BankAccount, BankTransaction
+from datetime import date
+from decimal import Decimal
+
+
+@pytest.fixture(scope='function')
+def test_bank_account(app, user):
+    """Create a test bank account for transactions"""
+    with app.app_context():
+        account = BankAccount(
+            user_id=user.id,
+            account_name='Test Savings Account',
+            account_number='1234567890',
+            bank_name='Test Bank',
+            account_type='Savings',
+            currency='ZAR',
+            balance=Decimal('10000.00'),
+            is_active=True
+        )
+        db.session.add(account)
+        db.session.commit()
+        db.session.refresh(account)
+        
+        yield account
+
+
+@pytest.fixture(scope='function')
+def test_categories(app, sample_categories):
+    """Reuse existing sample_categories but with specific test names"""
+    with app.app_context():
+        # Clear existing and create specific ones for bridge tests
+        TransactionCategory.query.delete()
+        
+        categories = [
+            TransactionCategory(
+                name='Transport',
+                erpnext_account='Transport Expenses - Company',
+                transaction_type='expense',
+                keywords='uber, taxi, fuel, petrol',
+                active=True
+            ),
+            TransactionCategory(
+                name='Food',
+                erpnext_account='Food Expenses - Company',
+                transaction_type='expense',
+                keywords='restaurant, coffee, lunch',
+                active=True
+            ),
+            TransactionCategory(
+                name='Bank Fees',
+                erpnext_account='Bank Charges - Company',
+                transaction_type='expense',
+                keywords='bank fee, service charge',
+                active=True
+            )
+        ]
+        
+        for cat in categories:
+            db.session.add(cat)
+        db.session.commit()
+        
+        yield categories
+
+
+@pytest.fixture(scope='function')
+def test_transactions(app, user, test_bank_account):
+    """Create test transactions for bridge tests"""
+    with app.app_context():
+        transactions = [
+            BankTransaction(
+                user_id=user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 1),
+                description='UBER TRIP TO AIRPORT',
+                withdrawal=Decimal('250.00'),
+                deposit=Decimal('0.00'),
+                balance=Decimal('5000.00'),
+                reference_number='TXN001'
+            ),
+            BankTransaction(
+                user_id=user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 2),
+                description='STARBUCKS COFFEE SHOP',
+                withdrawal=Decimal('45.00'),
+                deposit=Decimal('0.00'),
+                balance=Decimal('4955.00'),
+                reference_number='TXN002'
+            ),
+            BankTransaction(
+                user_id=user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 3),
+                description='MONTHLY BANK FEE',
+                withdrawal=Decimal('65.00'),
+                deposit=Decimal('0.00'),
+                balance=Decimal('4890.00'),
+                reference_number='TXN003'
+            ),
+            BankTransaction(
+                user_id=user.id,
+                bank_account_id=test_bank_account.id,
+                date=date(2024, 1, 4),
+                description='UNKNOWN TRANSACTION',
+                withdrawal=Decimal('100.00'),
+                deposit=Decimal('0.00'),
+                balance=Decimal('4790.00'),
+                reference_number='TXN004'
+            )
+        ]
+        
+        for txn in transactions:
+            db.session.add(txn)
+        db.session.commit()
+        
+        yield transactions
