@@ -24,11 +24,14 @@ def test_user(app):
         user.set_password('testpass123')
         db.session.add(user)
         db.session.commit()
-        return user
+        user_id = user.id  # Get ID before session closes
+        
+    # Return ID instead of object to avoid detached instance
+    return user_id
 
 
 @pytest.fixture
-def sample_categories(app, test_user):
+def sample_categories(app):
     """Create sample transaction categories"""
     with app.app_context():
         categories = [
@@ -59,10 +62,10 @@ def sample_categories(app, test_user):
 def sample_transactions(app, test_user, sample_categories):
     """Create sample transactions for testing"""
     with app.app_context():
-        # FIXED: Use email_id instead of gmail_id, add user_id
+        # test_user is now an ID, not an object
         statement = EmailStatement(
-            user_id=test_user.id,  # ADDED
-            email_id='test-statement-1',  # FIXED: was gmail_id
+            user_id=test_user,  # Use ID directly
+            email_id='test-statement-1',
             subject='Bank Statement',
             sender='bank@example.com',
             received_date=datetime.utcnow(),
@@ -74,7 +77,7 @@ def sample_transactions(app, test_user, sample_categories):
         
         transactions = [
             BankTransaction(
-                user_id=test_user.id,  # ADDED
+                user_id=test_user,  # Use ID directly
                 statement_id=statement.id,
                 date=date.today(),
                 description='Uber trip to office',
@@ -84,7 +87,7 @@ def sample_transactions(app, test_user, sample_categories):
                 reference_number='REF001'
             ),
             BankTransaction(
-                user_id=test_user.id,  # ADDED
+                user_id=test_user,  # Use ID directly
                 statement_id=statement.id,
                 date=date.today(),
                 description='Coffee at Starbucks',
@@ -94,7 +97,7 @@ def sample_transactions(app, test_user, sample_categories):
                 reference_number='REF002'
             ),
             BankTransaction(
-                user_id=test_user.id,  # ADDED
+                user_id=test_user,  # Use ID directly
                 statement_id=statement.id,
                 date=date.today(),
                 description='Unknown transaction',
