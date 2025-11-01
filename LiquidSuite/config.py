@@ -11,9 +11,14 @@ class Config:
     # Flask
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     
-    # Database
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-        'postgresql://localhost/lsuite'
+    # Database - FIX THE URL FORMAT
+    database_url = os.environ.get('DATABASE_URL') or 'postgresql://localhost/lsuite'
+    
+    # ✅ CRITICAL FIX: Convert postgres:// to postgresql://
+    if database_url and database_url.startswith('postgres://'):
+        database_url = database_url.replace('postgres://', 'postgresql://', 1)
+    
+    SQLALCHEMY_DATABASE_URI = database_url
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False
     
@@ -68,23 +73,15 @@ class ProductionConfig(Config):
     SESSION_COOKIE_SAMESITE = 'Strict'
 
 
-
-# ============================================================================
-# FILE 8: LiquidSuite/config.py - ADD TestConfig
-# ============================================================================
-"""
-Add this to your existing config.py
-"""
-
 class TestConfig(Config):
     """Test configuration"""
     TESTING = True
-    WTF_CSRF_ENABLED = False  # Disable CSRF for tests
+    WTF_CSRF_ENABLED = False
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'TEST_DATABASE_URL',
         'postgresql://test_user:test_password@localhost:5432/lsuite_test'
     )
-    SQLALCHEMY_ECHO = False  # Set to True for SQL debugging
+    SQLALCHEMY_ECHO = False
     
     # Test-specific settings
     ITEMS_PER_PAGE = 10
@@ -99,8 +96,6 @@ class TestConfig(Config):
 config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
-    'testing': TestConfig,  # ? ADD THIS
+    'testing': TestConfig,
     'default': DevelopmentConfig
 }
-
-
