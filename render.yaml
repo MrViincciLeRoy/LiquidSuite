@@ -1,7 +1,3 @@
-# ============================================================================
-# render.yaml - Render Blueprint for LSuite
-# ============================================================================
-
 services:
   - type: web
     name: lsuite-web
@@ -21,15 +17,6 @@ services:
       - key: DATABASE_URL
         sync: false
       
-      - key: SQLALCHEMY_DATABASE_URI
-        sync: false
-      
-      - key: CELERY_BROKER_URL
-        sync: false
-      
-      - key: CELERY_RESULT_BACKEND
-        sync: false
-      
       - key: SECRET_KEY
         generateValue: true
       
@@ -41,21 +28,6 @@ services:
       
       - key: GOOGLE_REDIRECT_URI
         value: https://lsuite-web.onrender.com/gmail/oauth/callback
-      
-      - key: ERPNEXT_BASE_URL
-        sync: false
-      
-      - key: ERPNEXT_API_KEY
-        sync: false
-      
-      - key: ERPNEXT_API_SECRET
-        sync: false
-      
-      - key: LOG_LEVEL
-        value: INFO
-      
-      - key: LOG_FILE
-        value: /var/log/lsuite.log
     
-    healthCheckPath: /
+    healthCheckPath: /health  # ✅ Changed from / to /health
     autoDeploy: true
