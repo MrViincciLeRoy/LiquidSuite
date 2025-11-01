@@ -1,0 +1,137 @@
+# ============================================================================
+# drop-database.yml - Drop All Database Tables (DESTRUCTIVE)
+# ============================================================================
+# WARNING: This workflow will DELETE ALL DATA from the database
+# Use with extreme caution - this action cannot be undone!
+# ============================================================================
+
+name: Drop Database Tables
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type "DELETE ALL DATA" to confirm'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+jobs:
+  drop-tables:
+    name: Drop All Database Tables
+    runs-on: ubuntu-latest
+    
+    # Add environment protection
+    environment: ${{ github.event.inputs.environment }}
+    
+    defaults:
+      run:
+        working-directory: LiquidSuite
+    
+    steps:
+      - name: Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "DELETE ALL DATA" ]; then
+            echo "❌ ERROR: Confirmation text does not match!"
+            echo "You must type 'DELETE ALL DATA' exactly to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Show Warning
+        run: |
+          echo "⚠️  =========================================="
+          echo "⚠️  WARNING: DESTRUCTIVE OPERATION"
+          echo "⚠️  =========================================="
+          echo ""
+          echo "This will DELETE ALL DATA from the database!"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Database: ${{ secrets.DATABASE_URL && '***configured***' || '❌ NOT CONFIGURED' }}"
+          echo ""
+          echo "Proceeding in 5 seconds..."
+          sleep 5
+      
+      - name: Drop All Tables
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SQLALCHEMY_DATABASE_URI: ${{ secrets.DATABASE_URL }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          FLASK_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          echo "🗑️  Dropping all database tables..."
+          echo ""
+          
+          # Create a temporary script to drop tables
+          cat > /tmp/drop_tables.py << 'EOF'
+          import sys
+          sys.path.insert(0, '.')
+          from lsuite import create_app
+          from lsuite.extensions import db
+          
+          app = create_app()
+          with app.app_context():
+              inspector = db.inspect(db.engine)
+              tables_before = inspector.get_table_names()
+              print(f"📊 Tables to drop: {len(tables_before)}")
+              for table in tables_before:
+                  print(f"  - {table}")
+              print()
+              
+              db.drop_all()
+              print("✅ All tables dropped successfully!")
+              
+              tables_after = inspector.get_table_names()
+              print(f"📊 Tables remaining: {len(tables_after)}")
+          EOF
+          
+          python /tmp/drop_tables.py
+          
+          echo ""
+          echo "✅ Database tables dropped successfully!"
+      
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "📊 Operation Summary"
+          echo "===================="
+          echo "Status: ✅ SUCCESS"
+          echo "Action: All tables dropped"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Timestamp: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          echo ""
+          echo "⚠️  The database is now empty!"
+          echo "Next steps:"
+          echo "  1. Run 'Initialize Database' workflow to recreate tables"
+          echo "  2. Run 'Seed Categories' workflow to add default data"
+      
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo ""
+          echo "❌ Operation Failed"
+          echo "===================="
+          echo "The drop operation encountered an error."
+          echo "Please check the logs above for details."
+          echo "Database state may be inconsistent."
