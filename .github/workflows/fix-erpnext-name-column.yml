@@ -1,0 +1,344 @@
+# ============================================================================
+# .github/workflows/fix-erpnext-name-column.yml
+# Fix missing 'name' column in erpnext_configs table
+# ============================================================================
+name: Fix ERPNext Config Name Column
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+
+jobs:
+  fix-erpnext-column:
+    name: Add name Column to erpnext_configs
+    runs-on: ubuntu-latest
+    
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install psycopg2-binary sqlalchemy
+      
+      - name: Fix Database URL Format
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          # Convert postgres:// to postgresql://
+          FIXED_URL="${DATABASE_URL//postgres:\/\//postgresql:\/\/}"
+          echo "FIXED_DATABASE_URL=$FIXED_URL" >> $GITHUB_ENV
+          echo "✅ Database URL format fixed for SQLAlchemy 2.x"
+      
+      - name: Test Database Connection
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          import psycopg2
+          from urllib.parse import urlparse
+          
+          print("=" * 70)
+          print("  TESTING DATABASE CONNECTION")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          if not db_url:
+              print("❌ DATABASE_URL not set!")
+              exit(1)
+          
+          parsed = urlparse(db_url)
+          
+          try:
+              conn = psycopg2.connect(
+                  host=parsed.hostname,
+                  port=parsed.port or 5432,
+                  user=parsed.username,
+                  password=parsed.password,
+                  database=parsed.path[1:]
+              )
+              print("✅ Database connection successful!")
+              
+              cursor = conn.cursor()
+              cursor.execute("SELECT version();")
+              version = cursor.fetchone()[0]
+              print(f"PostgreSQL version: {version[:50]}...")
+              
+              cursor.close()
+              conn.close()
+              
+          except Exception as e:
+              print(f"❌ Connection failed: {e}")
+              exit(1)
+          PYTHON
+      
+      - name: Check Current Schema
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("\n" + "=" * 70)
+          print("  CHECKING CURRENT SCHEMA")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              inspector = inspect(engine)
+              tables = inspector.get_table_names()
+              
+              if 'erpnext_configs' not in tables:
+                  print("\n❌ erpnext_configs table doesn't exist!")
+                  print("   Please run the init database workflow first")
+                  exit(1)
+              
+              print("\n✅ erpnext_configs table exists")
+              
+              # Get all columns
+              columns = inspector.get_columns('erpnext_configs')
+              
+              print("\n📋 Current columns in erpnext_configs:")
+              for col in sorted(columns, key=lambda x: x['name']):
+                  print(f"  - {col['name']:<30} {str(col['type']):<20}")
+              
+              # Check specifically for name column
+              col_names = [col['name'] for col in columns]
+              
+              if 'name' in col_names:
+                  print("\n✅ 'name' column ALREADY EXISTS")
+                  print("   No action needed!")
+                  exit(0)
+              else:
+                  print("\n⚠️  'name' column MISSING")
+                  print("   Will add it in next step...")
+          PYTHON
+      
+      - name: Add name Column
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text
+          
+          print("\n" + "=" * 70)
+          print("  ADDING 'name' COLUMN")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              trans = conn.begin()
+              try:
+                  print("\n🔧 Adding 'name' column to erpnext_configs...")
+                  
+                  # Add the column
+                  conn.execute(text("""
+                      ALTER TABLE erpnext_configs 
+                      ADD COLUMN IF NOT EXISTS name VARCHAR(100) NOT NULL DEFAULT 'Default ERPNext'
+                  """))
+                  
+                  print("   ✅ Column added successfully!")
+                  
+                  # Update existing rows with meaningful names
+                  print("\n🔧 Updating existing rows...")
+                  result = conn.execute(text("""
+                      UPDATE erpnext_configs 
+                      SET name = 'ERPNext Config ' || id::text 
+                      WHERE name = 'Default ERPNext'
+                  """))
+                  
+                  rows_updated = result.rowcount
+                  if rows_updated > 0:
+                      print(f"   ✅ Updated {rows_updated} existing rows")
+                  else:
+                      print("   ℹ️  No existing rows to update")
+                  
+                  trans.commit()
+                  
+                  print("\n" + "=" * 70)
+                  print("✅ COLUMN ADDED SUCCESSFULLY!")
+                  print("=" * 70)
+                  
+              except Exception as e:
+                  trans.rollback()
+                  print(f"\n❌ ERROR: {e}")
+                  import traceback
+                  traceback.print_exc()
+                  exit(1)
+          PYTHON
+      
+      - name: Verify Fix
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text, inspect
+          
+          print("\n" + "=" * 70)
+          print("  VERIFYING FIX")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              inspector = inspect(engine)
+              
+              # Check columns
+              columns = {col['name']: col for col in inspector.get_columns('erpnext_configs')}
+              
+              # List of required columns from the model
+              required = [
+                  'id', 'user_id', 'name', 'base_url', 'api_key', 
+                  'api_secret', 'default_company', 'bank_account', 
+                  'default_cost_center', 'is_active', 'last_sync',
+                  'created_at', 'updated_at'
+              ]
+              
+              print("\n✅ Verification checks:")
+              
+              missing = []
+              for col in required:
+                  if col in columns:
+                      print(f"  ✅ {col:<30} {str(columns[col]['type']):<20}")
+                  else:
+                      print(f"  ❌ {col:<30} MISSING!")
+                      missing.append(col)
+              
+              if missing:
+                  print(f"\n❌ Still missing: {', '.join(missing)}")
+                  exit(1)
+              
+              # Test the actual query that was failing
+              print("\n🧪 Testing the query that caused the 500 error...")
+              try:
+                  result = conn.execute(text("""
+                      SELECT id, user_id, name, base_url, api_key, api_secret, 
+                             default_company, bank_account, default_cost_center, 
+                             is_active, last_sync, created_at, updated_at 
+                      FROM erpnext_configs 
+                      WHERE is_active = true 
+                      LIMIT 1
+                  """))
+                  print("  ✅ Query executed successfully!")
+                  
+                  row = result.fetchone()
+                  if row:
+                      print(f"     Config found: ID {row[0]}, Name: {row[2]}")
+                  else:
+                      print("     ℹ️  No active configs yet (table empty)")
+              except Exception as e:
+                  print(f"  ❌ Query failed: {e}")
+                  exit(1)
+              
+              print("\n" + "=" * 70)
+              print("✅ ALL CHECKS PASSED!")
+              print("=" * 70)
+          PYTHON
+      
+      - name: Show Current Configs
+        env:
+          DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
+        run: |
+          python << 'PYTHON'
+          import os
+          from sqlalchemy import create_engine, text
+          
+          print("\n" + "=" * 70)
+          print("  CURRENT ERPNEXT CONFIGURATIONS")
+          print("=" * 70)
+          
+          db_url = os.getenv('DATABASE_URL')
+          engine = create_engine(db_url)
+          
+          with engine.connect() as conn:
+              result = conn.execute(text("""
+                  SELECT id, user_id, name, base_url, is_active 
+                  FROM erpnext_configs 
+                  ORDER BY id
+              """))
+              
+              configs = result.fetchall()
+              
+              if not configs:
+                  print("\nℹ️  No ERPNext configurations found")
+                  print("   You can add one through the web interface")
+              else:
+                  print(f"\n📋 Found {len(configs)} configuration(s):\n")
+                  for cfg in configs:
+                      status = "🟢 ACTIVE" if cfg[4] else "⚪ INACTIVE"
+                      print(f"  {status}")
+                      print(f"    ID:       {cfg[0]}")
+                      print(f"    User ID:  {cfg[1]}")
+                      print(f"    Name:     {cfg[2]}")
+                      print(f"    Base URL: {cfg[3]}")
+                      print()
+          PYTHON
+      
+      - name: Summary
+        if: success()
+        run: |
+          echo ""
+          echo "=" * 70
+          echo "✅ FIX COMPLETED SUCCESSFULLY!"
+          echo "=" * 70
+          echo ""
+          echo "Changes applied:"
+          echo "  ✅ Added 'name' column to erpnext_configs table"
+          echo "  ✅ Set default value 'Default ERPNext'"
+          echo "  ✅ Updated existing rows with unique names"
+          echo "  ✅ Verified all required columns exist"
+          echo ""
+          echo "Your application should now work correctly!"
+          echo "The 500 error on /bridge/bulk-operations is fixed."
+          echo ""
+          echo "Next steps:"
+          echo "  1. Test /bridge/bulk-operations - should load now"
+          echo "  2. You can rename configs through the web UI"
+          echo "  3. All bulk operations features should work"
+          echo ""
+      
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo ""
+          echo "❌ FIX FAILED"
+          echo "=" * 70
+          echo ""
+          echo "The migration encountered an error."
+          echo "Please check the logs above for details."
+          echo ""
+          echo "Common issues:"
+          echo "  - DATABASE_URL secret not set correctly"
+          echo "  - Database connection failed"
+          echo "  - erpnext_configs table doesn't exist yet"
+          echo ""
+          echo "Solutions:"
+          echo "  1. Run 'Initialize Database' workflow first"
+          echo "  2. Check your DATABASE_URL secret"
+          echo "  3. Try running this workflow again"
+          echo ""
