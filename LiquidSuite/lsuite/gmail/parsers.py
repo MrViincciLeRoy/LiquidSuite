@@ -130,9 +130,7 @@ class PDFParser:
                         if re.match(r'^\d{1,2}\s+\w{3}\s+\d{4}', next_line):
                             break
                         
-                        # ✅ FIX: Better pattern that validates amounts are actually monetary values
-                        # Pattern: up to 4 amount fields (fees, money_out, money_in, balance)
-                        # Each field is either "-" or a valid decimal number
+                        # Better pattern that validates amounts are actually monetary values
                         amount_pattern = r'^(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+(-|(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s+((?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{2})?)\s*$'
                         amount_match = re.match(amount_pattern, next_line)
                         
@@ -161,7 +159,7 @@ class PDFParser:
                                 i = j
                                 break
                             else:
-                                # ✅ FIX: Only add to description if it's not a random number
+                                # Only add to description if it's not a random number
                                 # Skip lines that are just long numbers (like card numbers: 525309988959)
                                 if next_line and not re.match(r'^\d{10,}$', next_line):
                                     # Check if it's a valid description line
@@ -194,7 +192,7 @@ class PDFParser:
                             i += 1
                             continue
                         
-                        # ✅ FIX: Parse amounts with validation
+                        # Parse amounts with validation
                         def parse_amount_safe(amount_str):
                             """Safely parse amount with validation"""
                             if not amount_str or amount_str == '-':
@@ -262,73 +260,216 @@ class PDFParser:
         return transactions
     
     def _parse_capitec(self, text):
-        """Parse Capitec PDF format"""
+        """Parse Capitec PDF format - COMPLETELY FIXED VERSION
+        
+        Capitec format from your PDF:
+        Date | Description | Category | Money In | Money Out | Fee* | Balance
+        
+        Example lines:
+        01/10/2024 Recurring Transfer Insufficient Funds of R1 000.00 (16916070)
+        01/10/2024 DebiCheck Insufficient Funds (R66.65): Capitec/general (CF69253296)
+        21/10/2024 Payment Received: 1070143456004 Vault M Other Income 88.00 73.54
+        25/10/2024 Banking App Cash Sent: ******* Cash Withdrawal -50.00 -10.00 28.64
+        """
         transactions = []
         
-        # Capitec typically uses format: Date Description Amount
+        # Split text into lines
         lines = text.split('\n')
         
         i = 0
         while i < len(lines):
             line = lines[i].strip()
             
-            # Look for date patterns at start of line
-            date_patterns = [
-                (r'^(\d{4}/\d{2}/\d{2})\s+(.+)', '%Y/%m/%d'),
-                (r'^(\d{2}/\d{2}/\d{4})\s+(.+)', '%d/%m/%Y'),
-                (r'^(\d{2}\s+\w{3})\s+(.+)', '%d %b'),
-            ]
+            # Skip empty lines and headers
+            if not line or 'Transaction History' in line or 'Money In' in line or 'Money Out' in line:
+                i += 1
+                continue
             
-            matched = False
-            for pattern, date_format in date_patterns:
-                date_match = re.match(pattern, line)
-                
-                if date_match:
-                    try:
-                        date_str = date_match.group(1).strip()
-                        rest = date_match.group(2).strip()
+            # Look for date at start: DD/MM/YYYY
+            date_match = re.match(r'^(\d{2}/\d{2}/\d{4})\s+(.+)', line)
+            
+            if date_match:
+                try:
+                    date_str = date_match.group(1)
+                    rest_of_line = date_match.group(2).strip()
+                    
+                    # Parse date
+                    trans_date = datetime.strptime(date_str, '%d/%m/%Y').date()
+                    
+                    # Build description and look for amounts
+                    description_parts = []
+                    category = None
+                    money_in = None
+                    money_out = None
+                    fee = None
+                    balance = None
+                    
+                    # Pattern to match amounts at the end of line
+                    # Capitec uses: [description] [category] [money_in OR money_out] [fee] [balance]
+                    # Amounts can be negative (with -) and may have commas
+                    # Pattern: optional negative amounts with optional commas and decimal
+                    amount_pattern = r'(.+?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*$'
+                    amount_match = re.search(amount_pattern, rest_of_line)
+                    
+                    if amount_match:
+                        # We have amounts on the same line
+                        desc_and_category = amount_match.group(1).strip()
+                        amount1_str = amount_match.group(2).strip()
+                        amount2_str = amount_match.group(3).strip()
                         
-                        # Handle dates without year
-                        if date_format == '%d %b':
-                            current_year = datetime.now().year
-                            date_str = f"{date_str} {current_year}"
-                            date_format = '%d %b %Y'
-                        
-                        trans_date = datetime.strptime(date_str, date_format).date()
-                        
-                        # Try to find amount on same line
-                        amount_pattern = r'(.+?)\s+(-?R?\s?[\d\s,]+\.\d{2})\s*$'
-                        amount_match = re.search(amount_pattern, rest)
-                        
-                        if amount_match:
-                            description = amount_match.group(1).strip()
-                            amount_str = amount_match.group(2).replace('R', '').replace(',', '').replace(' ', '').strip()
-                            
+                        # Parse amounts
+                        def parse_capitec_amount(amt_str):
+                            """Parse Capitec amount - handles negative and positive"""
+                            if not amt_str or amt_str == '-':
+                                return 0.0
                             try:
-                                amount = float(amount_str)
+                                cleaned = amt_str.replace(',', '').strip()
+                                return float(cleaned)
+                            except (ValueError, AttributeError):
+                                return 0.0
+                        
+                        amount1 = parse_capitec_amount(amount1_str)
+                        amount2 = parse_capitec_amount(amount2_str)
+                        
+                        # Determine which is the transaction amount and which is balance
+                        # In Capitec format, the last number is usually the balance
+                        # The second-to-last is the fee or transaction amount
+                        balance = amount2  # Last number is balance
+                        
+                        # Now check if there's a third amount (for fee)
+                        # Try to find 3 amounts: [transaction_amt] [fee] [balance]
+                        three_amount_pattern = r'(.+?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*$'
+                        three_amount_match = re.search(three_amount_pattern, rest_of_line)
+                        
+                        if three_amount_match:
+                            desc_and_category = three_amount_match.group(1).strip()
+                            trans_amount_str = three_amount_match.group(2).strip()
+                            fee_str = three_amount_match.group(3).strip()
+                            balance_str = three_amount_match.group(4).strip()
+                            
+                            trans_amount = parse_capitec_amount(trans_amount_str)
+                            fee = parse_capitec_amount(fee_str)
+                            balance = parse_capitec_amount(balance_str)
+                        else:
+                            # Only 2 amounts: [transaction_amt] [balance]
+                            trans_amount = amount1
+                            fee = 0.0
+                        
+                        # Extract category from description (last word before amounts)
+                        # Categories in your PDF: "Other Income", "Savings", "Cash Withdrawal", "Transfer", etc.
+                        desc_parts = desc_and_category.split()
+                        
+                        # Try to identify category keywords
+                        category_keywords = ['Income', 'Savings', 'Withdrawal', 'Transfer', 'Payments', 
+                                           'Cellphone', 'Uncategorised', 'Investments', 'Fees', 'Interest']
+                        
+                        for idx in range(len(desc_parts)-1, -1, -1):
+                            if desc_parts[idx] in category_keywords:
+                                if idx > 0 and desc_parts[idx-1] not in category_keywords:
+                                    # Check if previous word is also part of category
+                                    category = ' '.join(desc_parts[idx-1:idx+1])
+                                    description = ' '.join(desc_parts[:idx-1])
+                                else:
+                                    category = desc_parts[idx]
+                                    description = ' '.join(desc_parts[:idx])
+                                break
+                        
+                        if not category:
+                            # No category found, entire text is description
+                            description = desc_and_category
+                            category = 'Uncategorised'
+                        
+                        # Determine if it's a debit or credit
+                        # Positive amounts in "Money In" are credits
+                        # Negative amounts or amounts in "Money Out" are debits
+                        # Check the description for clues
+                        is_credit = False
+                        desc_lower = description.lower()
+                        
+                        # Keywords that indicate credits
+                        credit_keywords = ['payment received', 'received', 'deposit', 'interest received', 
+                                         'transfer received', 'refund']
+                        # Keywords that indicate debits
+                        debit_keywords = ['payment:', 'sent', 'cash sent', 'withdrawal', 'purchase', 
+                                        'transfer to', 'prepaid', 'voucher', 'debicheck', 'insufficient funds']
+                        
+                        # Check for credit indicators
+                        if any(keyword in desc_lower for keyword in credit_keywords):
+                            is_credit = True
+                        elif any(keyword in desc_lower for keyword in debit_keywords):
+                            is_credit = False
+                        else:
+                            # Use amount sign as indicator
+                            # If trans_amount is positive and large, it might be a credit
+                            # If trans_amount is negative, it's a debit
+                            if trans_amount < 0:
+                                is_credit = False
+                                trans_amount = abs(trans_amount)
+                            elif trans_amount > 0:
+                                # Ambiguous - check category
+                                if 'income' in category.lower() or 'received' in category.lower():
+                                    is_credit = True
+                                else:
+                                    # Default to debit for positive amounts unless explicitly income
+                                    is_credit = False
+                        
+                        # Add transaction if amount is valid
+                        if trans_amount > 0 and len(description) >= 3:
+                            transactions.append({
+                                'date': trans_date,
+                                'description': description.strip(),
+                                'amount': abs(trans_amount),
+                                'type': 'credit' if is_credit else 'debit',
+                                'reference': f"CAP-{trans_date.strftime('%Y%m%d')}-{len(transactions)}",
+                                'category': category,
+                                'fee': abs(fee) if fee else 0.0,
+                                'balance': balance
+                            })
+                            logger.debug(f"Parsed Capitec: {description[:30]} = {trans_amount} ({'CR' if is_credit else 'DR'})")
+                    
+                    else:
+                        # No amounts on this line, might be multi-line transaction
+                        # Look ahead to next line
+                        if i + 1 < len(lines):
+                            next_line = lines[i + 1].strip()
+                            # Check if next line has amounts
+                            next_amount_match = re.match(r'^(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s+(-?\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*$', next_line)
+                            if next_amount_match:
+                                # Multi-line transaction
+                                description = rest_of_line.strip()
+                                amount1_str = next_amount_match.group(1)
+                                amount2_str = next_amount_match.group(2)
                                 
-                                if len(description) >= 3:
+                                amount1 = parse_capitec_amount(amount1_str)
+                                amount2 = parse_capitec_amount(amount2_str)
+                                
+                                balance = amount2
+                                trans_amount = abs(amount1)
+                                
+                                # Determine type from description
+                                is_credit = any(kw in description.lower() for kw in 
+                                              ['received', 'deposit', 'income', 'refund'])
+                                
+                                if trans_amount > 0 and len(description) >= 3:
                                     transactions.append({
                                         'date': trans_date,
                                         'description': description,
-                                        'amount': abs(amount),
-                                        'type': 'debit' if amount < 0 or '-' in amount_match.group(2) else 'credit',
-                                        'reference': f"CAP-{trans_date.strftime('%Y%m%d')}-{len(transactions)}"
+                                        'amount': trans_amount,
+                                        'type': 'credit' if is_credit else 'debit',
+                                        'reference': f"CAP-{trans_date.strftime('%Y%m%d')}-{len(transactions)}",
+                                        'balance': balance
                                     })
-                                    matched = True
-                            except ValueError:
-                                pass
-                        
-                        if matched:
-                            break
-                    
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"Failed to parse Capitec transaction: {e}")
+                                    logger.debug(f"Parsed multi-line Capitec: {description[:30]} = {trans_amount}")
+                                    i += 1  # Skip next line as we processed it
+                
+                except (ValueError, IndexError) as e:
+                    logger.warning(f"Failed to parse Capitec transaction: {e} - Line: {line}")
             
             i += 1
         
         if not transactions:
             logger.warning("No transactions found with Capitec pattern")
+            logger.debug(f"Text sample:\n{text[:1000]}")
         else:
             logger.info(f"Successfully parsed {len(transactions)} Capitec transactions")
         
