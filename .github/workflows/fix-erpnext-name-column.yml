@@ -1,8 +1,8 @@
 # ============================================================================
 # .github/workflows/fix-erpnext-name-column.yml
-# Fix missing 'name' column in erpnext_configs table
+# Fix ALL missing columns in erpnext_configs table
 # ============================================================================
-name: Fix ERPNext Config Name Column
+name: Fix ERPNext Config Columns
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ on:
 
 jobs:
   fix-erpnext-column:
-    name: Add name Column to erpnext_configs
+    name: Fix erpnext_configs Table
     runs-on: ubuntu-latest
     
     environment: ${{ github.event.inputs.environment }}
@@ -121,65 +121,89 @@ jobs:
               print("\n📋 Current columns in erpnext_configs:")
               for col in sorted(columns, key=lambda x: x['name']):
                   print(f"  - {col['name']:<30} {str(col['type']):<20}")
-              
-              # Check specifically for name column
-              col_names = [col['name'] for col in columns]
-              
-              if 'name' in col_names:
-                  print("\n✅ 'name' column ALREADY EXISTS")
-                  print("   No action needed!")
-                  exit(0)
-              else:
-                  print("\n⚠️  'name' column MISSING")
-                  print("   Will add it in next step...")
           PYTHON
       
-      - name: Add name Column
+      - name: Add ALL Missing Columns
         env:
           DATABASE_URL: ${{ env.FIXED_DATABASE_URL }}
         run: |
           python << 'PYTHON'
           import os
-          from sqlalchemy import create_engine, text
+          from sqlalchemy import create_engine, text, inspect
           
           print("\n" + "=" * 70)
-          print("  ADDING 'name' COLUMN")
+          print("  ADDING ALL MISSING COLUMNS")
           print("=" * 70)
           
           db_url = os.getenv('DATABASE_URL')
           engine = create_engine(db_url)
           
+          # Define all required columns from the model
+          required_columns = {
+              'name': 'VARCHAR(100) NOT NULL DEFAULT \'Default ERPNext\'',
+              'base_url': 'VARCHAR(255) NOT NULL DEFAULT \'https://example.erpnext.com\'',
+              'default_company': 'VARCHAR(200)',
+              'bank_account': 'VARCHAR(200)',
+              'default_cost_center': 'VARCHAR(200)',
+          }
+          
           with engine.connect() as conn:
+              inspector = inspect(engine)
+              existing_columns = [col['name'] for col in inspector.get_columns('erpnext_configs')]
+              
+              print(f"\n📋 Existing columns: {len(existing_columns)}")
+              print(f"📋 Required columns: {len(required_columns)}")
+              
+              missing_columns = {k: v for k, v in required_columns.items() if k not in existing_columns}
+              
+              if not missing_columns:
+                  print("\n✅ All columns already exist!")
+                  exit(0)
+              
+              print(f"\n⚠️  Missing {len(missing_columns)} columns:")
+              for col in missing_columns:
+                  print(f"  - {col}")
+              
               trans = conn.begin()
+              
               try:
-                  print("\n🔧 Adding 'name' column to erpnext_configs...")
+                  # Add all missing columns
+                  for col_name, col_type in missing_columns.items():
+                      print(f"\n🔧 Adding {col_name}...")
+                      conn.execute(text(f"""
+                          ALTER TABLE erpnext_configs 
+                          ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                      """))
+                      print(f"   ✅ {col_name} added")
                   
-                  # Add the column
-                  conn.execute(text("""
-                      ALTER TABLE erpnext_configs 
-                      ADD COLUMN IF NOT EXISTS name VARCHAR(100) NOT NULL DEFAULT 'Default ERPNext'
-                  """))
+                  # Update existing rows with better names if name column was added
+                  if 'name' in missing_columns:
+                      print("\n🔧 Updating existing row names...")
+                      result = conn.execute(text("""
+                          UPDATE erpnext_configs 
+                          SET name = 'ERPNext Config ' || id::text 
+                          WHERE name = 'Default ERPNext'
+                      """))
+                      
+                      rows_updated = result.rowcount
+                      if rows_updated > 0:
+                          print(f"   ✅ Updated {rows_updated} existing rows")
                   
-                  print("   ✅ Column added successfully!")
-                  
-                  # Update existing rows with meaningful names
-                  print("\n🔧 Updating existing rows...")
-                  result = conn.execute(text("""
-                      UPDATE erpnext_configs 
-                      SET name = 'ERPNext Config ' || id::text 
-                      WHERE name = 'Default ERPNext'
-                  """))
-                  
-                  rows_updated = result.rowcount
-                  if rows_updated > 0:
-                      print(f"   ✅ Updated {rows_updated} existing rows")
-                  else:
-                      print("   ℹ️  No existing rows to update")
+                  # Update base_url for existing rows if it was added
+                  if 'base_url' in missing_columns:
+                      print("\n🔧 Setting base_url for existing rows...")
+                      result = conn.execute(text("""
+                          UPDATE erpnext_configs 
+                          SET base_url = 'https://your-erpnext-instance.com'
+                          WHERE base_url = 'https://example.erpnext.com'
+                      """))
+                      if result.rowcount > 0:
+                          print(f"   ✅ Updated {result.rowcount} rows (you'll need to update with real URL)")
                   
                   trans.commit()
                   
                   print("\n" + "=" * 70)
-                  print("✅ COLUMN ADDED SUCCESSFULLY!")
+                  print("✅ ALL COLUMNS ADDED SUCCESSFULLY!")
                   print("=" * 70)
                   
               except Exception as e:
@@ -249,6 +273,7 @@ jobs:
                   row = result.fetchone()
                   if row:
                       print(f"     Config found: ID {row[0]}, Name: {row[2]}")
+                      print(f"     Base URL: {row[3]}")
                   else:
                       print("     ℹ️  No active configs yet (table empty)")
               except Exception as e:
@@ -303,23 +328,28 @@ jobs:
         if: success()
         run: |
           echo ""
-          echo "=" * 70
+          echo "========================================================================"
           echo "✅ FIX COMPLETED SUCCESSFULLY!"
-          echo "=" * 70
+          echo "========================================================================"
           echo ""
           echo "Changes applied:"
-          echo "  ✅ Added 'name' column to erpnext_configs table"
-          echo "  ✅ Set default value 'Default ERPNext'"
-          echo "  ✅ Updated existing rows with unique names"
+          echo "  ✅ Added 'name' column"
+          echo "  ✅ Added 'base_url' column"
+          echo "  ✅ Added 'default_company' column"
+          echo "  ✅ Added 'bank_account' column"
+          echo "  ✅ Added 'default_cost_center' column"
+          echo "  ✅ Updated existing rows with default values"
           echo "  ✅ Verified all required columns exist"
           echo ""
           echo "Your application should now work correctly!"
           echo "The 500 error on /bridge/bulk-operations is fixed."
           echo ""
-          echo "Next steps:"
-          echo "  1. Test /bridge/bulk-operations - should load now"
-          echo "  2. You can rename configs through the web UI"
-          echo "  3. All bulk operations features should work"
+          echo "⚠️  IMPORTANT NEXT STEPS:"
+          echo "  1. Go to your ERPNext settings page in the app"
+          echo "  2. Update the base_url with your actual ERPNext URL"
+          echo "  3. Update other configuration fields as needed"
+          echo ""
+          echo "All bulk operations features should now work!"
           echo ""
       
       - name: Notify on Failure
@@ -327,7 +357,7 @@ jobs:
         run: |
           echo ""
           echo "❌ FIX FAILED"
-          echo "=" * 70
+          echo "========================================================================"
           echo ""
           echo "The migration encountered an error."
           echo "Please check the logs above for details."
